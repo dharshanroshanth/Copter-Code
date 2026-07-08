@@ -7,6 +7,7 @@ import { useStore, store } from '../store';
 import { Search, Bell, Plus, ChevronDown, User, LogOut, CheckCircle, Flame, Sun, Moon, Monitor } from 'lucide-react';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { logout as firebaseLogout } from '../lib/firebase';
 
 export default function Header() {
   const { user, currentView, theme } = useStore();
@@ -220,7 +221,12 @@ export default function Header() {
                       <span>Account Settings</span>
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
+                        try {
+                          await firebaseLogout();
+                        } catch (err) {
+                          console.error('Firebase logout failed:', err);
+                        }
                         store.setUser(null);
                         store.setView('landing');
                         setDropdownOpen(false);

@@ -29,7 +29,7 @@ export default function Sidebar() {
     { id: 'creator-studio', label: 'Creator Studio', icon: ImageIcon },
     { id: 'templates', label: 'Templates', icon: LayoutTemplate },
     { id: 'projects', label: 'Projects', icon: FolderOpen },
-    { id: 'files', label: 'Files', icon: FileText },
+    { id: 'files', label: 'Google Drive', icon: Cloud },
     { id: 'workspace', label: 'Workspace', icon: Users },
     { id: 'settings', label: 'Settings', icon: Settings },
   ] as const;
@@ -46,7 +46,7 @@ export default function Sidebar() {
       {/* Brand Logo Header */}
       <div className="pt-8 pb-6 px-6 flex items-center gap-3">
         <div
-          onClick={() => store.setView('landing')}
+          onClick={() => store.setView(user ? 'dashboard' : 'landing')}
           className="flex items-center gap-3 cursor-pointer group"
         >
           <div className="w-8 h-8 rounded-[10px] bg-[#6366F1] flex items-center justify-center text-white shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">

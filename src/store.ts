@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { User, ViewType, Project, Layer, Asset, WorkspaceStats, ActivityLog, TaskItem } from './types';
+import { saveUserProfile, fetchUserProfile, saveTaskToFirestore, fetchUserTasks } from './lib/firebaseStore';
 
 // Let's seed initial data that perfectly matches the high-fidelity UI mockups
 const initialUser: User = {
@@ -451,8 +452,46 @@ export const store = {
     globalState.currentView = view;
     notify();
   },
-  setUser(user: User | null) {
+  async setUser(user: User | null) {
+    if (!user) {
+      globalState.user = null;
+      globalState.tasks = initialTasks;
+      notify();
+      return;
+    }
+
+    try {
+      const existingProfile = await fetchUserProfile(user.id);
+      if (existingProfile) {
+        globalState.user = existingProfile;
+      } else {
+        await saveUserProfile(user);
+        globalState.user = user;
+      }
+
+      const tasks = await fetchUserTasks(user.id);
+      if (tasks && tasks.length > 0) {
+        globalState.tasks = tasks;
+      } else {
+        // Seed initial tasks to Firestore for user
+        for (const t of initialTasks) {
+          await saveTaskToFirestore(t, user.id);
+        }
+        globalState.tasks = initialTasks;
+      }
+    } catch (err) {
+      console.error("Failed to load user data from Firestore:", err);
+      globalState.user = user;
+    }
+    notify();
+  },
+  async updateUserProfile(user: User) {
     globalState.user = user;
+    try {
+      await saveUserProfile(user);
+    } catch (err) {
+      console.error("Failed to save user profile to Firestore:", err);
+    }
     notify();
   },
   setTheme(theme: 'auto' | 'light' | 'dark') {
@@ -551,11 +590,22 @@ export const store = {
     };
     globalState.tasks = [newTask, ...globalState.tasks];
     notify();
+
+    if (globalState.user) {
+      saveTaskToFirestore(newTask, globalState.user.id).catch(console.error);
+    }
   },
   toggleTask(taskId: string) {
-    globalState.tasks = globalState.tasks.map((t) =>
-      t.id === taskId ? { ...t, completed: !t.completed } : t
-    );
+    globalState.tasks = globalState.tasks.map((t) => {
+      if (t.id === taskId) {
+        const updated = { ...t, completed: !t.completed };
+        if (globalState.user) {
+          saveTaskToFirestore(updated, globalState.user.id).catch(console.error);
+        }
+        return updated;
+      }
+      return t;
+    });
     notify();
   },
   removeAiHistory(index: number) {

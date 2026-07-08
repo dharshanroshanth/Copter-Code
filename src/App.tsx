@@ -23,6 +23,7 @@ import Resources from './pages/Resources';
 import AIStudio from './pages/AIStudio';
 import CreatorStudio from './pages/CreatorStudio';
 import Settings from './pages/Settings';
+import GoogleDriveBrowser from './pages/GoogleDriveBrowser';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Grid, Folder, Image as ImageIcon, Users } from 'lucide-react';
 
@@ -61,14 +62,20 @@ export default function App() {
 
   // Auth Guard Effect
   React.useEffect(() => {
-    if (!user && !['login', 'signup'].includes(currentView)) {
-      store.setView('login');
+    if (!user) {
+      if (!['landing', 'login', 'signup'].includes(currentView)) {
+        store.setView('landing');
+      }
+    } else {
+      if (['landing', 'login', 'signup'].includes(currentView)) {
+        store.setView('dashboard');
+      }
     }
   }, [user, currentView]);
 
   // Helper renderer to dispatch pages based on current active view
   const renderView = () => {
-    if (!user && !['login', 'signup'].includes(currentView)) {
+    if (!user && !['landing', 'login', 'signup'].includes(currentView)) {
       return <Login />;
     }
 
@@ -119,17 +126,7 @@ export default function App() {
           </div>
         );
       case 'files':
-        return (
-          <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto mt-12 text-[#ecedee]">
-            <div className="w-12 h-12 bg-rose-500/10 text-rose-400 rounded-lg flex items-center justify-center mx-auto">
-              <ImageIcon className="w-6 h-6" />
-            </div>
-            <h3 className="text-base font-bold text-white">Asset Cloud Directory</h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Access your full upload history, exported files, isolated background layers, and original PNG source archives safely.
-            </p>
-          </div>
-        );
+        return <GoogleDriveBrowser />;
       case 'workspace':
         return (
           <div className="bg-[#121214] border border-[#27272a] rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto mt-12 text-[#ecedee]">

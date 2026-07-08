@@ -1,7 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { useStore, store } from '../store';
-import { Sparkles, Upload, Download, Loader2, ArrowLeft, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import { Sparkles, Upload, Download, Loader2, ArrowLeft, Image as ImageIcon, AlertTriangle, Cloud, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getAccessToken } from '../lib/firebase';
+import { uploadBase64ImageToDrive } from '../lib/googleDrive';
 
 // Securely proxies and converts cross-origin images to Base64 to prevent canvas contamination
 const prepareImageForCanvas = async (src: string): Promise<string> => {
@@ -29,83 +31,153 @@ const prepareImageForCanvas = async (src: string): Promise<string> => {
   return src;
 };
 
-// High-fidelity Programmatic Contrast, Color and Sharpness Enhancer with Noise-Gating
+// High-fidelity, professional-grade photographic contrast, exposure, and edge-preserving Unsharp Mask (USM) sharpener
 const enhanceAndSharpenImage = (ctx: CanvasRenderingContext2D, width: number, height: number, sharpenAmount: number = 0.6) => {
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
   const w = imageData.width;
   const h = imageData.height;
-  
-  // Create reference buffer
-  const original = new Uint8ClampedArray(data);
-  
-  // Professional, balanced photographic adjustments (vibrant, rich & clear)
-  const contrastFactor = 1.25;      // Distinct, clean contrast boost
-  const saturationFactor = 1.30;    // Rich, vivid colors
-  const brightnessOffset = 10;      // Exposure lift for bright, gorgeous results
 
-  // 1. First Pass: Apply Noticeable Color, Contrast, and Brightness Enhancement at pixel level with shadow/highlight protection
+  // 1. Convert RGB to YUV space to process Luminance (Y) separately from Chrominance (U, V)
+  // This is industry standard to avoid color fringing and chromatic noise amplification during sharpening.
+  const Y = new Float32Array(w * h);
+  const U = new Float32Array(w * h);
+  const V = new Float32Array(w * h);
+
   for (let idx = 0; idx < data.length; idx += 4) {
-    let r = original[idx];
-    let g = original[idx + 1];
-    let b = original[idx + 2];
+    const i = idx / 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
 
-    // Apply gentle brightness boost
-    r += brightnessOffset;
-    g += brightnessOffset;
-    b += brightnessOffset;
-
-    // Calculate luminance for highlight/shadow protection
-    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-    
-    // Protect shadows and highlights by reducing contrast factor at the extremes
-    // (Sigmoid-like soft roll-off)
-    const factor = contrastFactor * (1.0 - 0.25 * Math.pow((luma - 128) / 128, 2));
-
-    // Apply contrast boost
-    r = (r - 128) * factor + 128;
-    g = (g - 128) * factor + 128;
-    b = (b - 128) * factor + 128;
-
-    // Apply saturation boost
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    r = gray + (r - gray) * saturationFactor;
-    g = gray + (g - gray) * saturationFactor;
-    b = gray + (b - gray) * saturationFactor;
-
-    // Clamp values
-    data[idx] = Math.max(0, Math.min(255, r));
-    data[idx + 1] = Math.max(0, Math.min(255, g));
-    data[idx + 2] = Math.max(0, Math.min(255, b));
+    Y[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    U[i] = -0.14713 * r - 0.28886 * g + 0.436 * b;
+    V[i] = 0.615 * r - 0.51499 * g - 0.10001 * b;
   }
 
-  // Update reference for sharpening convolution pass
-  const enhancedOriginal = new Uint8ClampedArray(data);
+  // 2. Local/Global Contrast and Tone Mapping on the Luminance (Y) channel
+  // We use a professional-grade continuous tone reproduction curve that combines:
+  // - A linear component for natural gradient reproduction
+  // - A smoothstep (S-curve) component for photographic contrast pop in midtones
+  // - A square root (gamma) component to lift shadows and reveal details without grain
+  // Together, this matches professional film response curves and prevents crushing dark regions.
+  for (let i = 0; i < w * h; i++) {
+    const yNorm = Y[i] / 255;
 
-  // 2. Second Pass: High-Fidelity 3x3 Laplacian Sharpening Convolution (4-neighborhood)
-  // Apply sharpening across all pixels (no high gating) to guarantee blurriness is fixed and the image is visibly razor-sharp
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      for (let c = 0; c < 3; c++) {
-        const idx = (y * w + x) * 4 + c;
-        
-        // 4 surrounding pixels (cross structure is much cleaner and less noise-prone)
-        const top = enhancedOriginal[((y - 1) * w + x) * 4 + c];
-        const bottom = enhancedOriginal[((y + 1) * w + x) * 4 + c];
-        const left = enhancedOriginal[(y * w + (x - 1)) * 4 + c];
-        const right = enhancedOriginal[(y * w + (x + 1)) * 4 + c];
-        const center = enhancedOriginal[idx];
-        
-        // Laplacian edge value: center * 4 - sum(neighbors)
-        const edgeVal = center * 4 - (top + bottom + left + right);
-        
-        // Blend edge value to sharpen soft, blurry details beautifully
-        let val = center + edgeVal * sharpenAmount;
-        data[idx] = Math.max(0, Math.min(255, val));
-      }
+    // Beautifully balanced tone reproduction curve
+    const blendedY = yNorm * 0.45 + (yNorm * yNorm * (3.0 - 2.0 * yNorm)) * 0.35 + Math.sqrt(yNorm) * 0.20;
+
+    Y[i] = Math.max(0.0, Math.min(1.0, blendedY)) * 255;
+
+    // 2.1. Professional Vibrance and Skin Protection
+    // Instead of crude global saturation, we boost desaturated colors more than saturated colors,
+    // and gently damp the boost in the warm skin tone region to keep subjects looking completely natural.
+    const uVal = U[i];
+    const vVal = V[i];
+    const chroma = Math.sqrt(uVal * uVal + vVal * vVal);
+    const normalizedChroma = Math.min(1.0, chroma / 100);
+
+    let vibranceFactor = 1.10 - 0.15 * normalizedChroma;
+
+    // Skin-tone detection: Warm reddish-orange region in YUV is characterized by V > 0 and U < 0
+    if (vVal > 0 && uVal < 0) {
+      vibranceFactor = 1.0 + (vibranceFactor - 1.0) * 0.4; // Soften saturation boost to maintain natural skin tone appearance
+    }
+
+    U[i] *= vibranceFactor;
+    V[i] *= vibranceFactor;
+  }
+
+  // 3. Create a 5x5 Gaussian blurred version of the Y (Luminance) channel to use as low-frequency reference
+  // A 5x5 Gaussian blur has a wider radius than a simple 3x3 filter, extracting higher-level structural edges
+  // rather than pixel-level camera noise, completely resolving the heavy digital grain artifact issue.
+  const Y_blur = new Float32Array(w * h);
+  const Y_temp = new Float32Array(w * h);
+
+  // Horizontal Pass with edge clamping
+  for (let y = 0; y < h; y++) {
+    const rowOffset = y * w;
+    for (let x = 0; x < w; x++) {
+      const x_2 = rowOffset + Math.max(0, x - 2);
+      const x_1 = rowOffset + Math.max(0, x - 1);
+      const x_0 = rowOffset + x;
+      const x_p1 = rowOffset + Math.min(w - 1, x + 1);
+      const x_p2 = rowOffset + Math.min(w - 1, x + 2);
+      Y_temp[rowOffset + x] = (Y[x_2] + 4 * Y[x_1] + 6 * Y[x_0] + 4 * Y[x_p1] + Y[x_p2]) / 16;
     }
   }
-  
+
+  // Vertical Pass with edge clamping
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      const y_2 = Math.max(0, y - 2) * w + x;
+      const y_1 = Math.max(0, y - 1) * w + x;
+      const y_0 = y * w + x;
+      const y_p1 = Math.min(h - 1, y + 1) * w + x;
+      const y_p2 = Math.min(h - 1, y + 2) * w + x;
+      Y_blur[y * w + x] = (Y_temp[y_2] + 4 * Y_temp[y_1] + 6 * Y_temp[y_0] + 4 * Y_temp[y_p1] + Y_temp[y_p2]) / 16;
+    }
+  }
+
+  // 4. Adaptive Noise-Gated Unsharp Masking & Denoising
+  // We use precise noise gating and halo prevention:
+  // - High edge difference (>2.0): Sharpen with professional, moderate factor.
+  // - Flat regions (<1.5): Apply gentle bilateral-like skin smoothing.
+  // - Limit maximum sharpening change (halos) to preserve edge fidelity without ringing artifacts.
+  const Y_final = new Float32Array(w * h);
+  const maxSharpenFactor = sharpenAmount * 0.22; // Controlled, clean, high-fidelity clarity
+
+  for (let i = 0; i < w * h; i++) {
+    const yVal = Y[i];
+    const yBlur = Y_blur[i];
+    const edge = yVal - yBlur;
+    const absEdge = Math.abs(edge);
+
+    let finalY = yVal;
+
+    if (absEdge < 1.5) {
+      // Denoise flat areas smoothly: blend slightly with blurred Y to hide camera sensor noise on cheeks/background
+      const smoothFactor = 0.15 * (1.0 - absEdge / 1.5);
+      finalY = yVal * (1.0 - smoothFactor) + yBlur * smoothFactor;
+    } else {
+      // Noise gating transition from 2.0 to 8.0
+      let edgeWeight = 0;
+      if (absEdge > 2.0) {
+        edgeWeight = Math.min(1.0, (absEdge - 2.0) / 6.0);
+      }
+
+      // Compute sharpening adjustment
+      const sharpenFactor = maxSharpenFactor * edgeWeight;
+      let sharpenEffect = edge * sharpenFactor;
+
+      // Halo protection: limit maximum correction to avoid ringing artifacts on sharp high-contrast transitions
+      const maxChange = 18.0;
+      if (sharpenEffect > maxChange) sharpenEffect = maxChange;
+      if (sharpenEffect < -maxChange) sharpenEffect = -maxChange;
+
+      finalY = yVal + sharpenEffect;
+    }
+
+    Y_final[i] = Math.max(0.0, Math.min(255.0, finalY));
+  }
+
+  // 5. Convert YUV back to RGB space and write output pixels to canvas data
+  for (let i = 0; i < w * h; i++) {
+    const yVal = Y_final[i];
+    const uVal = U[i];
+    const vVal = V[i];
+
+    const r = yVal + 1.13983 * vVal;
+    const g = yVal - 0.39465 * uVal - 0.58060 * vVal;
+    const b = yVal + 2.03211 * uVal;
+
+    const idx = i * 4;
+    data[idx] = Math.max(0, Math.min(255, Math.round(r)));
+    data[idx + 1] = Math.max(0, Math.min(255, Math.round(g)));
+    data[idx + 2] = Math.max(0, Math.min(255, Math.round(b)));
+    // Alpha channel remains untouched
+  }
+
   ctx.putImageData(imageData, 0, 0);
 };
 
@@ -119,6 +191,11 @@ export default function ImageEnhancer() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Google Drive Saving States
+  const [isSavingToDrive, setIsSavingToDrive] = useState(false);
+  const [driveSaveSuccess, setDriveSaveSuccess] = useState(false);
+  const [driveSaveError, setDriveSaveError] = useState<string | null>(null);
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -127,8 +204,35 @@ export default function ImageEnhancer() {
         setImage(event.target?.result as string);
         setResult(null);
         setError(null);
+        setDriveSaveError(null);
+        setDriveSaveSuccess(false);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const saveToGoogleDrive = async () => {
+    if (!result) return;
+    const token = getAccessToken();
+    if (!token) {
+      setDriveSaveError('Please connect your Google Drive account first in the Google Drive tab.');
+      return;
+    }
+
+    setIsSavingToDrive(true);
+    setDriveSaveSuccess(false);
+    setDriveSaveError(null);
+
+    try {
+      const filename = `enhanced_photo_${Date.now()}.png`;
+      await uploadBase64ImageToDrive(token, result, filename);
+      setDriveSaveSuccess(true);
+      setTimeout(() => setDriveSaveSuccess(false), 4000);
+    } catch (err: any) {
+      console.error('Error saving to drive:', err);
+      setDriveSaveError(err?.message || 'Failed to save to Google Drive.');
+    } finally {
+      setIsSavingToDrive(false);
     }
   };
 
@@ -263,18 +367,18 @@ export default function ImageEnhancer() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-4">
-                <h3 className="text-[14px] font-bold text-slate-700 flex items-center gap-2">
-                  <ImageIcon className="w-4 h-4" /> Original Image
-                </h3>
-                <div className="aspect-square bg-white border border-slate-200 rounded-2xl overflow-hidden relative flex items-center justify-center">
-                  
-                  {/* Overlay Badge */}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[14px] font-bold text-slate-700 flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4" /> Original Image
+                  </h3>
                   <div 
-                    className="absolute top-4 right-4 bg-slate-950/90 text-white text-[11px] font-black uppercase tracking-wider px-3 py-1.5 z-10 shadow-md border border-white/15 select-none rounded-full"
+                    className="bg-slate-950/95 text-white text-[11px] font-black uppercase tracking-wider px-3 py-1 z-10 shadow-md border border-white/15 select-none rounded-full min-w-[70px] text-center"
                     style={{ letterSpacing: '0.07em' }}
                   >
                     Before
                   </div>
+                </div>
+                <div className="aspect-square bg-white border border-slate-200 rounded-2xl overflow-hidden relative flex items-center justify-center">
 
                   <AnimatePresence>
                     {isProcessing && (
@@ -333,20 +437,20 @@ export default function ImageEnhancer() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="text-[14px] font-bold text-slate-700 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" /> Result
-                </h3>
-                <div className="aspect-square bg-white border border-slate-200 rounded-2xl overflow-hidden relative flex items-center justify-center">
-                  
-                  {/* Overlay Badge */}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[14px] font-bold text-slate-700 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" /> Result
+                  </h3>
                   {result && (
                     <div 
-                      className="absolute top-4 right-4 bg-pink-600 text-white text-[11px] font-black uppercase tracking-wider px-3 py-1.5 z-10 shadow-md border border-pink-400/30 select-none rounded-full"
+                      className="bg-pink-600 text-white text-[11px] font-black uppercase tracking-wider px-3 py-1 z-10 shadow-md border border-pink-400/30 select-none rounded-full min-w-[70px] text-center"
                       style={{ letterSpacing: '0.07em' }}
                     >
                       After
                     </div>
                   )}
+                </div>
+                <div className="aspect-square bg-white border border-slate-200 rounded-2xl overflow-hidden relative flex items-center justify-center">
 
                   <AnimatePresence>
                     {result ? (
@@ -366,10 +470,45 @@ export default function ImageEnhancer() {
                   </AnimatePresence>
                 </div>
                 {result && (
-                  <button onClick={downloadResult} className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[14px] font-bold shadow-sm transition-colors flex items-center justify-center gap-2">
-                    <Download className="w-4 h-4" />
-                    Download Enhanced
-                  </button>
+                  <div className="space-y-2">
+                    <button onClick={downloadResult} className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[14px] font-bold shadow-sm transition-colors flex items-center justify-center gap-2">
+                      <Download className="w-4 h-4" />
+                      Download Enhanced
+                    </button>
+                    
+                    <button
+                      onClick={saveToGoogleDrive}
+                      disabled={isSavingToDrive}
+                      className={`w-full py-3 px-4 rounded-xl border font-bold text-[14px] transition-all flex items-center justify-center gap-2 shadow-sm ${
+                        driveSaveSuccess
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                          : 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white border-indigo-500'
+                      }`}
+                    >
+                      {isSavingToDrive ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Saving to Google Drive...
+                        </>
+                      ) : driveSaveSuccess ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          Saved to Google Drive!
+                        </>
+                      ) : (
+                        <>
+                          <Cloud className="w-4 h-4" />
+                          Save to Google Drive
+                        </>
+                      )}
+                    </button>
+
+                    {driveSaveError && (
+                      <p className="text-[11px] text-rose-500 text-center font-bold mt-1">
+                        ⚠️ {driveSaveError}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

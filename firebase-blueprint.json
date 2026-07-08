@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "user_profile": {
+      "title": "UserProfile",
+      "description": "Store user preferences and workspace statistics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "avatar": { "type": "string" },
+        "plan": { "type": "string" },
+        "theme": { "type": "string", "enum": ["auto", "light", "dark"] }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "task": {
+      "title": "Task",
+      "description": "Store custom user task lists",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "completed", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user_profile",
+      "description": "Securely isolates user profile and preference state"
+    },
+    "/tasks/{taskId}": {
+      "schema": "task",
+      "description": "Stores user-specific dynamic lists"
+    }
+  }
+}

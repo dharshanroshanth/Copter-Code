@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all rule as required by Phase 4.1
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Secure authentication checks
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Prevent ID poisoning/resource exhaustion attacks
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profile Validation - strictly enforces types, sizes, and schema structure
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'email'])
+        && data.keys().size() <= 8
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.email is string && data.email.size() <= 100
+        && (!('avatar' in data) || data.avatar == null || (data.avatar is string && data.avatar.size() <= 1048576))
+        && (!('plan' in data) || data.plan == null || (data.plan is string && data.plan.size() <= 20))
+        && (!('theme' in data) || data.theme == null || (data.theme is string && data.theme in ['auto', 'light', 'dark']));
+    }
+
+    // Task Validation - strictly enforces task structures, sizes, types and user ownership
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'title', 'completed', 'userId'])
+        && data.keys().size() <= 8
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 200
+        && data.completed is bool
+        && data.userId is string && data.userId == request.auth.uid
+        && (!('dueDate' in data) || data.dueDate == null || (data.dueDate is string && data.dueDate.size() <= 50));
+    }
+
+    // Users Collection - split PII and profile isolation
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidUserProfile(incoming());
+      allow delete: if isOwner(userId);
+    }
+
+    // Tasks Collection - Zero-Trust Query Enforced lists and action guarding
+    match /tasks/{taskId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(taskId) && isValidTask(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(taskId) && isValidTask(incoming()) && existing().userId == request.auth.uid && incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isValidId(taskId) && existing().userId == request.auth.uid;
+    }
+  }
+}

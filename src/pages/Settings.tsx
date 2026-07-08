@@ -29,9 +29,9 @@ export default function Settings() {
   const [avatar, setAvatar] = useState(user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (user) {
-      store.setUser({
+      await store.updateUserProfile({
         ...user,
         name,
         email,

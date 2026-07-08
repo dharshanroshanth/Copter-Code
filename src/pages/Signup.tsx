@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { store } from '../store';
 import { useState } from 'react';
-import { Sparkles, Mail, Lock, ShieldCheck, Zap, Focus, EyeOff, Eye, User as UserIcon, Cloud } from 'lucide-react';
+import { Sparkles, Mail, Lock, ShieldCheck, Zap, Focus, EyeOff, Eye, User as UserIcon, Cloud, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { googleSignIn, emailSignUp } from '../lib/firebase';
 
 export default function Signup() {
   const [name, setName] = useState('');
@@ -13,8 +14,37 @@ export default function Signup() {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isEmailLoading, setIsEmailLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsGoogleLoading(true);
+      setError('');
+      const result = await googleSignIn();
+      if (result) {
+        await store.setUser({
+          id: result.user.uid,
+          name: result.user.displayName || 'Google User',
+          email: result.user.email || '',
+          avatar: result.user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150',
+          plan: 'pro',
+          storageUsed: 9.4,
+          storageLimit: 20.0,
+          creditsUsed: 1450,
+          creditsLimit: 5000,
+        });
+        store.setView('dashboard');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || 'Google Sign-In failed.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -33,18 +63,37 @@ export default function Signup() {
       return;
     }
 
-    store.setUser({
-      id: 'signed-up-user-id',
-      name: name,
-      email: email,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150',
-      plan: 'free',
-      storageUsed: 0.0,
-      storageLimit: 20,
-      creditsUsed: 10,
-      creditsLimit: 500,
-    });
-    store.setView('dashboard');
+    try {
+      setIsEmailLoading(true);
+      const result = await emailSignUp(email, password, name);
+      if (result.user) {
+        await store.setUser({
+          id: result.user.uid,
+          name: name,
+          email: result.user.email || email,
+          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150',
+          plan: 'free',
+          storageUsed: 0.0,
+          storageLimit: 20,
+          creditsUsed: 10,
+          creditsLimit: 500,
+        });
+        store.setView('dashboard');
+      }
+    } catch (err: any) {
+      console.error('Email sign up error:', err);
+      let errMsg = err?.message || 'Registration failed.';
+      if (errMsg.includes('auth/configuration-not-found') || errMsg.includes('auth/operation-not-allowed')) {
+        errMsg = 'Email/Password sign-up is not enabled in Firebase Auth. Please enable it in the Firebase Console, or continue with Google Sign-In.';
+      } else if (errMsg.includes('auth/email-already-in-use')) {
+        errMsg = 'This email is already in use.';
+      } else if (errMsg.includes('auth/weak-password')) {
+        errMsg = 'Password must be at least 6 characters.';
+      }
+      setError(errMsg);
+    } finally {
+      setIsEmailLoading(false);
+    }
   };
 
   return (
@@ -167,14 +216,22 @@ export default function Signup() {
             </div>
 
             <div className="space-y-3 mb-6">
-              <button onClick={() => {}} className="w-full h-11 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-[14px] font-semibold text-slate-700 flex items-center justify-center gap-3 transition-colors shadow-sm">
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.61a5.66 5.66 0 0 1-2.45 3.71v3.08h3.95c2.31-2.13 3.63-5.27 3.63-8.64z" />
-                  <path fill="#34A853" d="M12 24c3.24 0 5.97-1.08 7.96-2.91l-3.95-3.08c-1.1.74-2.51 1.18-4.01 1.18-3.08 0-5.69-2.08-6.62-4.88H1.31v3.18A11.99 11.99 0 0 0 12 24z" />
-                  <path fill="#FBBC05" d="M5.38 14.31a7.16 7.16 0 0 1 0-4.62V6.51H1.31a11.99 11.99 0 0 0 0 10.98l4.07-3.18z" />
-                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.96 1.19 15.24 0 12 0 7.31 0 3.28 2.69 1.31 6.51l4.07 3.18c.93-2.8 3.54-4.88 6.62-4.88z" />
-                </svg>
-                Sign up with Google
+              <button
+                onClick={handleGoogleSignIn}
+                disabled={isGoogleLoading}
+                className="w-full h-11 bg-white border border-slate-200 hover:bg-slate-50 disabled:bg-slate-50 rounded-xl text-[14px] font-semibold text-slate-700 flex items-center justify-center gap-3 transition-colors shadow-sm"
+              >
+                {isGoogleLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                ) : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.61a5.66 5.66 0 0 1-2.45 3.71v3.08h3.95c2.31-2.13 3.63-5.27 3.63-8.64z" />
+                    <path fill="#34A853" d="M12 24c3.24 0 5.97-1.08 7.96-2.91l-3.95-3.08c-1.1.74-2.51 1.18-4.01 1.18-3.08 0-5.69-2.08-6.62-4.88H1.31v3.18A11.99 11.99 0 0 0 12 24z" />
+                    <path fill="#FBBC05" d="M5.38 14.31a7.16 7.16 0 0 1 0-4.62V6.51H1.31a11.99 11.99 0 0 0 0 10.98l4.07-3.18z" />
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.96 1.19 15.24 0 12 0 7.31 0 3.28 2.69 1.31 6.51l4.07 3.18c.93-2.8 3.54-4.88 6.62-4.88z" />
+                  </svg>
+                )}
+                {isGoogleLoading ? 'Connecting...' : 'Sign up with Google'}
               </button>
 
               <button onClick={() => {}} className="w-full h-11 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-[14px] font-semibold text-slate-700 flex items-center justify-center gap-3 transition-colors shadow-sm">
@@ -276,8 +333,13 @@ export default function Signup() {
                 </label>
               </div>
 
-              <button type="submit" className="w-full h-11 mt-2 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-xl text-[15px] font-bold transition-all shadow-lg shadow-indigo-500/25">
-                Sign Up
+              <button
+                type="submit"
+                disabled={isEmailLoading}
+                className="w-full h-11 mt-2 bg-[#6366F1] hover:bg-indigo-600 disabled:bg-indigo-400 text-white rounded-xl text-[15px] font-bold transition-all shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2"
+              >
+                {isEmailLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isEmailLoading ? 'Signing Up...' : 'Sign Up'}
               </button>
             </form>
 
