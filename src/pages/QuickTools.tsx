@@ -20,8 +20,29 @@ import {
   LayoutTemplate
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { removeBackground } from '@imgly/background-removal';
 import { motion, AnimatePresence } from 'motion/react';
+
+// Helper to convert image sources (including client-side blob URLs) to Base64 so they can be processed on the server
+const prepareImageForServer = async (src: string): Promise<string> => {
+  if (src.startsWith('data:') || src.startsWith('http')) {
+    return src;
+  }
+  if (src.startsWith('blob:')) {
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error('Failed to convert blob URL to base64:', err);
+    }
+  }
+  return src;
+};
 
 export default function QuickTools() {
   const { selectedImage } = useStore();
@@ -31,10 +52,12 @@ export default function QuickTools() {
   const defaultImage = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=800';
   const initialImage = selectedImage || defaultImage;
   const [activeImage, setActiveImage] = useState(initialImage);
+  const [error, setError] = useState<string | null>(null);
   
   useEffect(() => {
     setActiveImage(selectedImage || defaultImage);
     setIsBackgroundRemoved(false);
+    setError(null);
   }, [selectedImage]);
 
   // Manual Adjustment states
@@ -58,41 +81,60 @@ export default function QuickTools() {
     setHue(0);
     setIsBackgroundRemoved(false);
     setIsUpscaled(false);
+    setError(null);
   };
 
   const handleAIAction = async (action: string, label: string) => {
     setTransforming(true);
     setTransformMessage(label);
+    setError(null);
 
     try {
-      const response = await fetch('/api/ai/transform', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: activeImage,
-          action: action,
-        }),
-      });
-      const data = await response.json();
-
+      // Secure, local-hosted server-side background remover
       if (action === 'remove-bg') {
-        const blob = await removeBackground(activeImage, {
-          publicPath: "https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/"
+        const preparedImage = await prepareImageForServer(activeImage);
+        const response = await fetch('/api/ai/remove-bg', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: preparedImage }),
         });
-        const url = URL.createObjectURL(blob);
-        setActiveImage(url);
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Server responded with status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+
+        setActiveImage(data.imageUrl);
         setIsBackgroundRemoved(true);
-      } else if (action === 'upscale') {
-        setIsUpscaled(true);
-        setBrightness(105);
-        setContrast(102);
-      } else if (action === 'enhance') {
-        setBrightness(110);
-        setContrast(115);
-        setSaturation(120);
+      } else {
+        // Fallback or API-based logic for other transformations
+        const response = await fetch('/api/ai/transform', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: activeImage,
+            action: action,
+          }),
+        });
+        const data = await response.json();
+
+        if (action === 'upscale') {
+          setIsUpscaled(true);
+          setBrightness(105);
+          setContrast(102);
+        } else if (action === 'enhance') {
+          setBrightness(110);
+          setContrast(115);
+          setSaturation(120);
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('AI Transform failed:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(`AI Action "${action}" failed: ${errMsg}. Try another image.`);
     } finally {
       setTransforming(false);
     }
@@ -117,6 +159,16 @@ export default function QuickTools() {
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pb-12 text-[#ecedee]">
       {/* LEFT: Central Workspace Editor Stage (7 Cols) */}
       <div className="lg:col-span-8 flex flex-col gap-6">
+        {error && (
+          <div className="bg-rose-950/40 border border-rose-500/30 text-rose-200 p-4 rounded-xl flex items-start gap-3">
+            <span className="text-rose-400 font-bold">⚠️</span>
+            <div className="space-y-1">
+              <h4 className="font-bold text-sm text-white">Action Failed</h4>
+              <p className="text-xs text-zinc-300 leading-relaxed">{error}</p>
+            </div>
+          </div>
+        )}
+
         {/* Top Control Action Bar */}
         <div className="h-14 bg-[#121214] border border-[#27272a] rounded-xl px-5 flex items-center justify-between shadow-md">
           <div className="flex items-center gap-4">

@@ -8,6 +8,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { removeBackground as removeBackgroundNode } from '@imgly/background-removal-node';
 
 dotenv.config();
 
@@ -180,6 +181,68 @@ app.post('/api/ai/transform', async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Transformation failed.' });
+  }
+});
+
+// Secure, CORS-free same-origin image proxy to load remote images without canvas tainting
+app.post('/api/ai/proxy-image', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'URL parameter is required.' });
+    }
+    console.log(`Server-side proxying image from URL: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch remote image. Status: ${response.status}`);
+    }
+    
+    const buffer = await response.arrayBuffer();
+    const mimeType = response.headers.get('content-type') || 'image/jpeg';
+    const base64 = Buffer.from(buffer).toString('base64');
+    
+    res.json({
+      success: true,
+      dataUrl: `data:${mimeType};base64,${base64}`
+    });
+  } catch (error: any) {
+    console.error('Server-side image proxy failed:', error);
+    res.status(500).json({ error: error.message || 'Image proxy failed on server.' });
+  }
+});
+
+// Secure, CORS-free, same-origin, server-side background removal
+app.post('/api/ai/remove-bg', async (req, res) => {
+  try {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: 'Image parameter is required.' });
+    }
+
+    console.log('Server-side removing background...');
+    
+    let input: any = image;
+    if (image.startsWith('data:')) {
+      const parts = image.split(';base64,');
+      const mimeType = parts[0].split(':')[1] || 'image/png';
+      const base64Data = parts[1];
+      const buffer = Buffer.from(base64Data, 'base64');
+      input = new Blob([buffer], { type: mimeType });
+    }
+
+    const resultBlob = await removeBackgroundNode(input);
+    const resultBuffer = await resultBlob.arrayBuffer();
+    const resultBase64 = Buffer.from(resultBuffer).toString('base64');
+    const resultDataUrl = `data:image/png;base64,${resultBase64}`;
+
+    res.json({
+      success: true,
+      imageUrl: resultDataUrl
+    });
+  } catch (error: any) {
+    console.error('Server-side background removal failed:', error);
+    res.status(500).json({ error: error.message || 'Background removal failed on server.' });
   }
 });
 

@@ -3,16 +3,37 @@ import { saveAs } from 'file-saver';
 import * as React from 'react';
 import ReactCrop, { type Crop, type PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
-import { removeBackground } from '@imgly/background-removal';
 import { useStore, store } from '../store';
 import {
   Crop as CropIcon, Sliders, Sparkles, Type, Layers, Wand2, Image as ImageIcon,
   SquareStack, Archive, Frame, MoreHorizontal, ChevronLeft, Undo, Redo, Cloud,
-  Crown, Download, ChevronDown, RotateCw, FlipHorizontal, Link,
+  Download, ChevronDown, RotateCw, FlipHorizontal, Link,
   ZoomIn, ZoomOut, Maximize, Play, LayoutGrid, Settings2, Diamond,
   Triangle, CloudRain, Circle, Plus, Hash, Trash2, X,
   FileImage,
 } from 'lucide-react';
+
+// Helper to convert image sources (including client-side blob URLs) to Base64 so they can be processed on the server
+const prepareImageForServer = async (src: string): Promise<string> => {
+  if (src.startsWith('data:') || src.startsWith('http')) {
+    return src;
+  }
+  if (src.startsWith('blob:')) {
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error('Failed to convert blob URL to base64:', err);
+    }
+  }
+  return src;
+};
 
 export default function Editor() {
   const { selectedImage, activeQuickTool } = useStore();
@@ -68,6 +89,10 @@ export default function Editor() {
 
   const [adjustments, setAdjustments] = React.useState({ ...defaultAdjustments });
   const [transform, setTransform] = React.useState({ ...defaultTransform });
+  const [rotateInput, setRotateInput] = React.useState(defaultTransform.rotate.toString());
+  React.useEffect(() => {
+    setRotateInput(transform.rotate.toString());
+  }, [transform.rotate]);
   const [zoom, setZoom] = React.useState(100);
   const [crop, setCrop] = React.useState<Crop>();
   const [completedCrop, setCompletedCrop] = React.useState<PixelCrop>();
@@ -76,10 +101,10 @@ export default function Editor() {
   const [isLinked, setIsLinked] = React.useState(true);
   const linkedAspectRef = React.useRef(1920/1080);
   React.useEffect(() => {
-    if (isLinked && dimensions.w > 0 && dimensions.h > 0 && activeRatio !== "custom") {
+    if (isLinked && dimensions.w > 0 && dimensions.h > 0) {
       linkedAspectRef.current = dimensions.w / dimensions.h;
     }
-  }, [isLinked, dimensions.w, dimensions.h, activeRatio]);
+  }, [isLinked]);
   
   const [batchImages, setBatchImages] = React.useState<{id: string, src: string, name: string, status: 'pending'|'processing'|'done'|'error', progress: number, processedDataUrl?: string}[]>([]);
   const [batchBgRemoval, setBatchBgRemoval] = React.useState(false);
@@ -111,15 +136,26 @@ export default function Editor() {
         let finalSrc = imgData.src;
 
         if (batchBgRemoval) {
-          const blob = await removeBackground(finalSrc, {
-            publicPath: "https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/",
-            progress: (key, current, total) => {
-              if (total) {
-                setBatchImages(prev => prev.map(img => img.id === imgData.id ? { ...img, progress: Math.round((current / total) * 100) } : img));
-              }
-            }
+          setBatchImages(prev => prev.map(img => img.id === imgData.id ? { ...img, progress: 30 } : img));
+          const preparedImage = await prepareImageForServer(finalSrc);
+          setBatchImages(prev => prev.map(img => img.id === imgData.id ? { ...img, progress: 65 } : img));
+          
+          const response = await fetch('/api/ai/remove-bg', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: preparedImage }),
           });
-          finalSrc = URL.createObjectURL(blob);
+          
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `Server responded with status ${response.status}`);
+          }
+          
+          const data = await response.json();
+          if (data.error) throw new Error(data.error);
+          
+          finalSrc = data.imageUrl;
+          setBatchImages(prev => prev.map(img => img.id === imgData.id ? { ...img, progress: 100 } : img));
         }
 
         const canvas = document.createElement('canvas');
@@ -145,7 +181,7 @@ export default function Editor() {
            const isRotated = transform.rotate % 180 !== 0;
            const effImgW = isRotated ? imageEl.naturalHeight : imageEl.naturalWidth;
            const effImgH = isRotated ? imageEl.naturalWidth : imageEl.naturalHeight;
-           const coverScale = Math.max(canvas.width / effImgW, canvas.height / effImgH);
+           const coverScale = Math.min(canvas.width / effImgW, canvas.height / effImgH);
            const scaledW = imageEl.naturalWidth * coverScale;
            const scaledH = imageEl.naturalHeight * coverScale;
 
@@ -165,7 +201,106 @@ export default function Editor() {
 
   // Layers State
   const [texts, setTexts] = React.useState<{id: string, text: string, x: number, y: number, color: string, size: number}[]>([]);
-  const [overlays, setOverlays] = React.useState<{id: string, src: string, x: number, y: number, width: number}[]>([]);
+  const [overlays, setOverlays] = React.useState<{id: string, src: string, x: number, y: number, width: number, opacity?: number}[]>([]);
+
+  const [selectedOverlayId, setSelectedOverlayId] = React.useState<string | null>(null);
+  const canvasContainerRef = React.useRef<HTMLDivElement>(null);
+  const dragRef = React.useRef<{
+    type: 'drag' | 'resize' | null;
+    overlayId: string;
+    startX: number;
+    startY: number;
+    startOverlayX: number;
+    startOverlayY: number;
+    startOverlayWidth: number;
+  }>({
+    type: null,
+    overlayId: '',
+    startX: 0,
+    startY: 0,
+    startOverlayX: 0,
+    startOverlayY: 0,
+    startOverlayWidth: 0,
+  });
+
+  const handleOverlayStart = (
+    e: React.MouseEvent | React.TouchEvent, 
+    oId: string, 
+    type: 'drag' | 'resize'
+  ) => {
+    e.stopPropagation();
+    setSelectedOverlayId(oId);
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const targetOverlay = overlays.find(o => o.id === oId);
+    if (!targetOverlay) return;
+    
+    dragRef.current = {
+      type,
+      overlayId: oId,
+      startX: clientX,
+      startY: clientY,
+      startOverlayX: targetOverlay.x,
+      startOverlayY: targetOverlay.y,
+      startOverlayWidth: targetOverlay.width,
+    };
+    
+    const onMove = (moveEvent: MouseEvent | TouchEvent) => {
+      if (!dragRef.current.type) return;
+      
+      const currentX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
+      const currentY = 'touches' in moveEvent ? moveEvent.touches[0].clientY : moveEvent.clientY;
+      
+      const dx = currentX - dragRef.current.startX;
+      const dy = currentY - dragRef.current.startY;
+      
+      const container = canvasContainerRef.current;
+      if (!container) return;
+      const containerRect = container.getBoundingClientRect();
+      
+      const pctDx = (dx / containerRect.width) * 100;
+      const pctDy = (dy / containerRect.height) * 100;
+      
+      setOverlays(prevOverlays => 
+        prevOverlays.map(o => {
+          if (o.id !== dragRef.current.overlayId) return o;
+          
+          if (dragRef.current.type === 'drag') {
+            return {
+              ...o,
+              x: Math.max(-50, Math.min(150, dragRef.current.startOverlayX + pctDx)),
+              y: Math.max(-50, Math.min(150, dragRef.current.startOverlayY + pctDy)),
+            };
+          } else if (dragRef.current.type === 'resize') {
+            const newWidth = Math.max(5, Math.min(100, dragRef.current.startOverlayWidth + pctDx * 2));
+            return {
+              ...o,
+              width: newWidth,
+            };
+          }
+          return o;
+        })
+      );
+    };
+    
+    const onEnd = () => {
+      if (dragRef.current.type) {
+        saveHistoryState();
+        dragRef.current.type = null;
+      }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+    };
+    
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove);
+    window.addEventListener('touchend', onEnd);
+  };
 
   // History State
   const [history, setHistory] = React.useState<any[]>([]);
@@ -234,6 +369,9 @@ export default function Editor() {
         h: e.currentTarget.naturalHeight
       });
     }
+    if (activeNav === 'crop') {
+      handleRatioClick(activeRatio, e.currentTarget);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -255,35 +393,56 @@ export default function Editor() {
 
   
   const applyCrop = () => {
-    if (!imageRef.current || !completedCrop || completedCrop.width === 0 || completedCrop.height === 0) return;
-    const canvas = document.createElement('canvas');
-    const scaleX = imageRef.current.naturalWidth / imageRef.current.width;
-    const scaleY = imageRef.current.naturalHeight / imageRef.current.height;
+    if (!imageRef.current) return;
     
-    // In our setup, objectFit: 'cover' might change rendered size, but react-image-crop handles it.
-    // If we use unit: '%', completedCrop is in pixels of the rendered image.
-    // Let's use the natural dimensions for accurate crop.
-    const pixelRatio = window.devicePixelRatio;
-    canvas.width = completedCrop.width * scaleX;
-    canvas.height = completedCrop.height * scaleY;
+    const naturalWidth = imageRef.current.naturalWidth;
+    const naturalHeight = imageRef.current.naturalHeight;
+    
+    let x = 0;
+    let y = 0;
+    let w = naturalWidth;
+    let h = naturalHeight;
+    
+    if (crop && crop.width && crop.height) {
+      x = (crop.x / 100) * naturalWidth;
+      y = (crop.y / 100) * naturalHeight;
+      w = (crop.width / 100) * naturalWidth;
+      h = (crop.height / 100) * naturalHeight;
+    } else if (completedCrop && completedCrop.width > 0 && completedCrop.height > 0) {
+      const scaleX = naturalWidth / imageRef.current.width;
+      const scaleY = naturalHeight / imageRef.current.height;
+      x = completedCrop.x * scaleX;
+      y = completedCrop.y * scaleY;
+      w = completedCrop.width * scaleX;
+      h = completedCrop.height * scaleY;
+    }
+    
+    if (w <= 0 || h <= 0) return;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
     ctx.drawImage(
       imageRef.current,
-      completedCrop.x * scaleX,
-      completedCrop.y * scaleY,
-      completedCrop.width * scaleX,
-      completedCrop.height * scaleY,
+      x,
+      y,
+      w,
+      h,
       0,
       0,
-      completedCrop.width * scaleX,
-      completedCrop.height * scaleY
+      w,
+      h
     );
     
     const base64Image = canvas.toDataURL('image/png');
     setActiveImage(base64Image);
-    setDimensions({ w: canvas.width, h: canvas.height });
+    const roundedW = Math.round(w);
+    const roundedH = Math.round(h);
+    setDimensions({ w: roundedW, h: roundedH });
+    linkedAspectRef.current = roundedW / roundedH;
     setCrop(undefined);
     setCompletedCrop(undefined);
     saveHistoryState();
@@ -296,11 +455,16 @@ export default function Editor() {
     }
   }, [activeNav]);
 
-  const handleRatioClick = (ratioId: string) => {
+  const handleRatioClick = (ratioId: string, imgEl?: HTMLImageElement) => {
     setActiveRatio(ratioId);
-    if (!imageRef.current) return;
+    const img = imgEl || imageRef.current;
+    if (!img) return;
     
     let aspect: number | undefined = undefined;
+    const imgW = img.naturalWidth;
+    const imgH = img.naturalHeight;
+    const imageAspect = imgW / imgH;
+
     switch (ratioId) {
       case '1:1': aspect = 1; break;
       case '16:9': aspect = 16 / 9; break;
@@ -308,39 +472,45 @@ export default function Editor() {
       case '9:16': aspect = 9 / 16; break;
       case '3:2': aspect = 3 / 2; break;
       case '2:3': aspect = 2 / 3; break;
-      case 'original': aspect = imageRef.current.naturalWidth / imageRef.current.naturalHeight; break;
+      case 'original': aspect = imageAspect; break;
       case 'custom':
       case 'free':
         aspect = undefined; break;
     }
     setCropAspect(aspect);
+
+    let newCrop: Crop;
     if (aspect) {
-      setCrop({ unit: '%', width: 80, height: 80 / aspect, x: 10, y: 10 });
+      let widthPercent = 80;
+      let heightPercent = 80 * imageAspect / aspect;
+      
+      if (heightPercent > 80) {
+        heightPercent = 80;
+        widthPercent = 80 * aspect / imageAspect;
+      }
+      
+      const xPercent = (100 - widthPercent) / 2;
+      const yPercent = (100 - heightPercent) / 2;
+      
+      newCrop = {
+        unit: '%',
+        width: widthPercent,
+        height: heightPercent,
+        x: xPercent,
+        y: yPercent
+      };
     } else {
-      setCrop({ unit: '%', width: 80, height: 80, x: 10, y: 10 });
-    }
-
-    const imgW = imageRef.current.naturalWidth;
-    const imgH = imageRef.current.naturalHeight;
-    let newW = dimensions.w;
-    let newH = dimensions.h;
-    
-    const area = newW * newH || (imgW * imgH);
-
-    switch (ratioId) {
-      case '1:1': newW = Math.sqrt(area); newH = newW; break;
-      case '16:9': newW = Math.sqrt(area * 16 / 9); newH = newW * 9 / 16; break;
-      case '4:5': newW = Math.sqrt(area * 4 / 5); newH = newW * 5 / 4; break;
-      case '9:16': newW = Math.sqrt(area * 9 / 16); newH = newW * 16 / 9; break;
-      case '3:2': newW = Math.sqrt(area * 3 / 2); newH = newW * 2 / 3; break;
-      case '2:3': newW = Math.sqrt(area * 2 / 3); newH = newW * 3 / 2; break;
-      case 'original': newW = imgW; newH = imgH; break;
+      newCrop = {
+        unit: '%',
+        width: 80,
+        height: 80,
+        x: 10,
+        y: 10
+      };
     }
     
-    if (ratioId !== 'custom' && ratioId !== 'free') {
-      setDimensions({ w: Math.round(newW), h: Math.round(newH) });
-      saveHistoryState();
-    }
+    setCrop(newCrop);
+    setCompletedCrop(undefined);
   };
 
   const getFilterStyle = () => {
@@ -362,7 +532,7 @@ export default function Editor() {
     return filter;
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!imageRef.current) return;
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -379,25 +549,73 @@ export default function Editor() {
     const imgW = imageRef.current.naturalWidth;
     const imgH = imageRef.current.naturalHeight;
 
+    ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((transform.rotate * Math.PI) / 180);
     ctx.scale(transform.flipX ? -1 : 1, transform.flipY ? -1 : 1);
     
-    // Fit image to cover dimensions
+    // Draw image to fill the custom dimensions on canvas (accounting for rotation)
     const isRotated = transform.rotate % 180 !== 0;
-    const effImgW = isRotated ? imgH : imgW;
-    const effImgH = isRotated ? imgW : imgH;
-    const coverScale = Math.max(canvas.width / effImgW, canvas.height / effImgH);
-    const scaledW = imgW * coverScale;
-    const scaledH = imgH * coverScale;
+    const drawW = isRotated ? canvas.height : canvas.width;
+    const drawH = isRotated ? canvas.width : canvas.height;
 
     ctx.drawImage(
       imageRef.current,
-      -scaledW / 2,
-      -scaledH / 2,
-      scaledW,
-      scaledH
+      -drawW / 2,
+      -drawH / 2,
+      drawW,
+      drawH
     );
+    ctx.restore();
+
+    // Reset filter for drawing overlays and text on top of the edited image
+    ctx.filter = 'none';
+
+    // Draw overlays in high resolution
+    for (const o of overlays) {
+      const oImg = new Image();
+      oImg.crossOrigin = "anonymous";
+      await new Promise<void>((resolve) => {
+        oImg.onload = () => resolve();
+        oImg.onerror = () => resolve();
+        oImg.src = o.src;
+      });
+      
+      const overlayWidth = (o.width / 100) * canvas.width;
+      const overlayHeight = oImg.naturalWidth ? (overlayWidth * (oImg.naturalHeight / oImg.naturalWidth)) : overlayWidth;
+      const overlayX = (o.x / 100) * canvas.width - overlayWidth / 2;
+      const overlayY = (o.y / 100) * canvas.height - overlayHeight / 2;
+      
+      ctx.save();
+      ctx.globalAlpha = o.opacity !== undefined ? o.opacity : 1;
+      ctx.drawImage(oImg, overlayX, overlayY, overlayWidth, overlayHeight);
+      ctx.restore();
+    }
+
+    // Draw texts in high resolution
+    for (const t of texts) {
+      ctx.save();
+      ctx.fillStyle = t.color;
+      
+      // Calculate font size relative to output canvas
+      const displayHeight = imageRef.current ? imageRef.current.clientHeight : 600;
+      const scaleFactor = canvas.height / (displayHeight || 600);
+      const scaledSize = t.size * scaleFactor;
+      
+      ctx.font = `bold ${scaledSize}px Inter, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 4 * scaleFactor;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 2 * scaleFactor;
+      
+      const textX = (t.x / 100) * canvas.width;
+      const textY = (t.y / 100) * canvas.height;
+      ctx.fillText(t.text, textX, textY);
+      ctx.restore();
+    }
 
     const link = document.createElement('a');
     const ext = exportFormat === 'jpeg' ? 'jpg' : exportFormat;
@@ -458,7 +676,7 @@ export default function Editor() {
   const renderCropPanel = () => (
     <>
       <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
-        <h2 className="text-[16px] font-bold text-slate-900">Crop & Resize</h2>
+        <h2 className="text-[16px] font-bold text-slate-900">Crop & Rotate</h2>
       </div>
       <div className="p-5 space-y-8">
         <div className="space-y-4">
@@ -499,8 +717,30 @@ export default function Editor() {
               onMouseUp={saveHistoryState} onTouchEnd={saveHistoryState}
               className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-0 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#6366F1] [&::-webkit-slider-thumb]:rounded-full shadow-sm" 
             />
-            <div className="w-12 h-8 rounded-lg border border-slate-200 flex items-center justify-center text-[12px] font-medium text-slate-700 bg-slate-50">
-              {transform.rotate}°
+            <div className="relative w-16 h-8 rounded-lg border border-slate-200 flex items-center bg-slate-50 focus-within:border-[#6366F1] focus-within:ring-1">
+              <input 
+                type="text" 
+                value={rotateInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setRotateInput(val);
+                  const parsed = parseInt(val);
+                  if (!isNaN(parsed)) {
+                    setTransform(prev => ({ ...prev, rotate: parsed }));
+                  }
+                }}
+                onBlur={() => {
+                  saveHistoryState();
+                  setRotateInput(transform.rotate.toString());
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                className="w-full h-full bg-transparent text-center text-[12px] font-medium text-slate-700 focus:outline-none pr-4"
+              />
+              <span className="absolute right-2 text-[12px] font-medium text-slate-400 pointer-events-none">°</span>
             </div>
           </div>
           <div className="flex gap-2">
@@ -513,45 +753,6 @@ export default function Editor() {
             <button onClick={() => { setTransform({ ...transform, flipX: !transform.flipX }); saveHistoryState(); }} className="flex-1 h-11 rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors">
               <FlipHorizontal className="w-4.5 h-4.5" />
             </button>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <h3 className="text-[14px] font-bold text-slate-900">Resize</h3>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-11 border border-slate-200 rounded-xl flex items-center px-3 bg-white focus-within:border-[#6366F1] focus-within:ring-1">
-              <span className="text-[14px] text-slate-400 font-medium mr-2">W</span>
-              <input type="number" value={dimensions.w || ""} 
-                onChange={(e) => {
-                  setActiveRatio("custom");
-                  const newW = parseInt(e.target.value) || 0;
-                  if (isLinked) {
-                    setDimensions({ w: newW, h: Math.round(newW / linkedAspectRef.current) });
-                  } else {
-                    setDimensions({ ...dimensions, w: newW });
-                  }
-                }}
-                onBlur={saveHistoryState}
-                className="w-full text-[15px] font-medium text-slate-900 outline-none bg-transparent" />
-            </div>
-            <button onClick={() => setIsLinked(!isLinked)} className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLinked ? 'bg-[#F0F0FE] text-[#6366F1]' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>
-              <Link className="w-4 h-4" />
-            </button>
-            <div className="flex-1 h-11 border border-slate-200 rounded-xl flex items-center px-3 bg-white focus-within:border-[#6366F1] focus-within:ring-1">
-              <span className="text-[14px] text-slate-400 font-medium mr-2">H</span>
-              <input type="number" value={dimensions.h || ""} 
-                onChange={(e) => {
-                  setActiveRatio("custom");
-                  const newH = parseInt(e.target.value) || 0;
-                  if (isLinked) {
-                    setDimensions({ w: Math.round(newH * linkedAspectRef.current), h: newH });
-                  } else {
-                    setDimensions({ ...dimensions, h: newH });
-                  }
-                }}
-                onBlur={saveHistoryState}
-                className="w-full text-[15px] font-medium text-slate-900 outline-none bg-transparent" />
-            </div>
           </div>
         </div>
       </div>
@@ -847,38 +1048,136 @@ export default function Editor() {
     </>
   );
 
-  const renderOverlayPanel = () => (
-    <>
-      <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
-        <h2 className="text-[16px] font-bold text-slate-900">Overlays</h2>
-      </div>
-      <div className="p-5 space-y-4">
-        <input type="file" ref={overlayInputRef} onChange={(e) => {
-          if (e.target.files && e.target.files[0]) {
-            const url = URL.createObjectURL(e.target.files[0]);
-            setOverlays([...overlays, { id: Date.now().toString(), src: url, x: 50, y: 50, width: 30 }]);
-            saveHistoryState();
-          }
-        }} accept="image/*" className="hidden" />
-        <button 
-          onClick={() => overlayInputRef.current?.click()}
-          className="w-full py-3 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-xl text-[14px] font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
-        >
-          <Plus className="w-4 h-4" /> Upload Overlay
-        </button>
-        <div className="grid grid-cols-2 gap-3 mt-6">
-           {overlays.map(o => (
-             <div key={o.id} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-50 shadow-sm">
-               <img src={o.src} className="w-full h-full object-contain p-2" />
-               <button onClick={() => { setOverlays(overlays.filter(x => x.id !== o.id)); saveHistoryState(); }} className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white hover:scale-105">
-                 <X className="w-4 h-4" />
-               </button>
-             </div>
-           ))}
+  const renderOverlayPanel = () => {
+    const selectedOverlay = overlays.find(o => o.id === selectedOverlayId);
+    
+    return (
+      <>
+        <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
+          <h2 className="text-[16px] font-bold text-slate-900">Overlays</h2>
         </div>
-      </div>
-    </>
-  );
+        <div className="p-5 space-y-6">
+          <input type="file" ref={overlayInputRef} onChange={(e) => {
+            if (e.target.files && e.target.files[0]) {
+              const url = URL.createObjectURL(e.target.files[0]);
+              const newOverlayId = Date.now().toString();
+              setOverlays([...overlays, { id: newOverlayId, src: url, x: 50, y: 50, width: 30, opacity: 1 }]);
+              setSelectedOverlayId(newOverlayId);
+              saveHistoryState();
+            }
+          }} accept="image/*" className="hidden" />
+          <button 
+            onClick={() => overlayInputRef.current?.click()}
+            className="w-full py-3 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-xl text-[14px] font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+          >
+            <Plus className="w-4 h-4" /> Upload Overlay
+          </button>
+
+          {selectedOverlay ? (
+            <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/30 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-bold text-indigo-950">Selected Overlay</span>
+                <span className="text-[11px] font-medium text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">Active</span>
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between text-[12px] font-medium text-slate-600">
+                  <span>Opacity</span>
+                  <span>{Math.round((selectedOverlay.opacity !== undefined ? selectedOverlay.opacity : 1) * 100)}%</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="0.1" 
+                  max="1" 
+                  step="0.05"
+                  value={selectedOverlay.opacity !== undefined ? selectedOverlay.opacity : 1}
+                  onChange={(e) => {
+                    const newOpacity = parseFloat(e.target.value);
+                    setOverlays(overlays.map(o => o.id === selectedOverlayId ? { ...o, opacity: newOpacity } : o));
+                  }}
+                  onMouseUp={saveHistoryState}
+                  onTouchEnd={saveHistoryState}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#6366F1]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-[12px] font-medium text-slate-600">
+                  <span>Size</span>
+                  <span>{Math.round(selectedOverlay.width)}%</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="5" 
+                  max="100" 
+                  step="1"
+                  value={selectedOverlay.width}
+                  onChange={(e) => {
+                    const newW = parseInt(e.target.value);
+                    setOverlays(overlays.map(o => o.id === selectedOverlayId ? { ...o, width: newW } : o));
+                  }}
+                  onMouseUp={saveHistoryState}
+                  onTouchEnd={saveHistoryState}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#6366F1]"
+                />
+              </div>
+
+              <div className="pt-2 border-t border-slate-200/50 flex gap-2">
+                <button 
+                  onClick={() => {
+                    setOverlays(overlays.filter(o => o.id !== selectedOverlayId));
+                    setSelectedOverlayId(null);
+                    saveHistoryState();
+                  }}
+                  className="flex-1 py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+                <button 
+                  onClick={() => setSelectedOverlayId(null)}
+                  className="flex-1 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-[12px] font-semibold transition-colors"
+                >
+                  Deselect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-slate-400">
+              <p className="text-[12px] leading-relaxed">
+                Click on an overlay on the canvas or upload one to edit its transparency, size, or layer order.
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 mt-6">
+             {overlays.map(o => (
+               <div 
+                 key={o.id} 
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   setSelectedOverlayId(o.id);
+                 }}
+                 className={`relative group rounded-xl overflow-hidden border aspect-square bg-slate-50 shadow-sm cursor-pointer transition-all ${selectedOverlayId === o.id ? 'ring-2 ring-[#6366F1] border-transparent' : 'border-slate-200 hover:border-slate-300'}`}
+               >
+                 <img src={o.src} className="w-full h-full object-contain p-2" />
+                 <button 
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     setOverlays(overlays.filter(x => x.id !== o.id));
+                     if (selectedOverlayId === o.id) setSelectedOverlayId(null);
+                     saveHistoryState();
+                   }} 
+                   className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white hover:scale-105"
+                 >
+                   <X className="w-4 h-4" />
+                 </button>
+               </div>
+             ))}
+          </div>
+        </div>
+      </>
+    );
+  };
 
   const renderSidebarContent = () => {
     switch (activeNav) {
@@ -938,10 +1237,6 @@ export default function Editor() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button className="px-4 h-9 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[13px] font-bold flex items-center gap-2 transition-colors">
-            <Crown className="w-4 h-4 text-amber-500" />
-            Upgrade to Pro
-          </button>
           <button onClick={handleDownload} className="px-4 h-9 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-lg text-[13px] font-bold flex items-center gap-2 transition-colors shadow-sm">
             <Download className="w-4 h-4" />
             Export Image
@@ -1004,7 +1299,11 @@ export default function Editor() {
           </div>
 
           {/* CANVAS CONTENT */}
-          <div className="flex-1 relative flex items-center justify-center p-8 mt-16 mb-24 overflow-hidden">
+          <div 
+            onMouseDown={() => setSelectedOverlayId(null)}
+            onTouchStart={() => setSelectedOverlayId(null)}
+            className="flex-1 relative flex items-center justify-center p-8 mt-16 mb-24 overflow-hidden"
+          >
              <div 
                style={{
                  transform: `scale(${zoom / 100})`,
@@ -1014,7 +1313,8 @@ export default function Editor() {
                className="relative flex items-center justify-center max-w-full max-h-full"
              >
                 <div 
-                  className="relative shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/5 rounded-sm overflow-hidden"
+                  ref={canvasContainerRef}
+                  className="relative shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/5 rounded-sm overflow-hidden flex items-center justify-center"
                   style={{
                     aspectRatio: dimensions.w > 0 && dimensions.h > 0 ? `${dimensions.w}/${dimensions.h}` : 'auto',
                     maxHeight: '65vh',
@@ -1028,6 +1328,7 @@ export default function Editor() {
                      onChange={c => setCrop(c)}
                      onComplete={c => setCompletedCrop(c)}
                      aspect={cropAspect}
+                     style={{ maxWidth: '100%', maxHeight: '100%', display: 'flex' }}
                    >
                      <img 
                        ref={imageRef}
@@ -1036,8 +1337,8 @@ export default function Editor() {
                        onLoad={handleImageLoad}
                        crossOrigin="anonymous"
                        style={{
-                         width: '100%',
-                         height: '100%',
+                         maxWidth: '100%',
+                         maxHeight: '100%',
                          objectFit: 'contain',
                          filter: getFilterStyle(),
                          transform: `rotate(${transform.rotate}deg) scaleX(${transform.flipX ? -1 : 1}) scaleY(${transform.flipY ? -1 : 1})`,
@@ -1055,7 +1356,7 @@ export default function Editor() {
                        style={{
                          width: '100%',
                          height: '100%',
-                         objectFit: 'contain',
+                         objectFit: 'fill',
                          filter: getFilterStyle(),
                          transform: `rotate(${transform.rotate}deg) scaleX(${transform.flipX ? -1 : 1}) scaleY(${transform.flipY ? -1 : 1})`,
                          transformOrigin: 'center center'
@@ -1076,12 +1377,64 @@ export default function Editor() {
                       </div>
                    ))}
                    
-                   {overlays.map(o => (
-                      <div key={o.id} className="absolute cursor-move" 
-                           style={{ left: `${o.x}%`, top: `${o.y}%`, width: `${o.width}%`, transform: 'translate(-50%, -50%)' }}>
-                        <img src={o.src} className="w-full drop-shadow-xl pointer-events-none" />
-                      </div>
-                   ))}
+                   {overlays.map(o => {
+                      const isSelected = selectedOverlayId === o.id;
+                      return (
+                        <div 
+                          key={o.id} 
+                          className={`absolute group select-none transition-shadow ${isSelected ? 'ring-2 ring-[#6366F1] ring-offset-1' : 'hover:ring-1 hover:ring-[#6366F1]/50'}`} 
+                          style={{ 
+                            left: `${o.x}%`, 
+                            top: `${o.y}%`, 
+                            width: `${o.width}%`, 
+                            transform: 'translate(-50%, -50%)',
+                            opacity: o.opacity !== undefined ? o.opacity : 1,
+                            cursor: 'move',
+                            zIndex: isSelected ? 50 : undefined
+                          }}
+                          onMouseDown={(e) => handleOverlayStart(e, o.id, 'drag')}
+                          onTouchStart={(e) => handleOverlayStart(e, o.id, 'drag')}
+                        >
+                          <img 
+                            src={o.src} 
+                            className="w-full drop-shadow-xl pointer-events-none select-none" 
+                            alt="Overlay item"
+                          />
+                          
+                          {isSelected && (
+                            <>
+                              {/* Close handle top-right */}
+                              <button 
+                                className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-md transition-colors z-20 pointer-events-auto cursor-pointer"
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  setOverlays(overlays.filter(x => x.id !== o.id));
+                                  setSelectedOverlayId(null);
+                                  saveHistoryState();
+                                }}
+                                onTouchStart={(e) => {
+                                  e.stopPropagation();
+                                  setOverlays(overlays.filter(x => x.id !== o.id));
+                                  setSelectedOverlayId(null);
+                                  saveHistoryState();
+                                }}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+
+                              {/* Bottom-right resize handle */}
+                              <div 
+                                className="absolute -bottom-2.5 -right-2.5 w-5 h-5 bg-white border-2 border-[#6366F1] rounded-full shadow-md z-20 cursor-se-resize flex items-center justify-center hover:scale-110 transition-transform"
+                                onMouseDown={(e) => handleOverlayStart(e, o.id, 'resize')}
+                                onTouchStart={(e) => handleOverlayStart(e, o.id, 'resize')}
+                              >
+                                <div className="w-1.5 h-1.5 bg-[#6366F1] rounded-full"></div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                   })}
                 </div>
              </div>
           </div>

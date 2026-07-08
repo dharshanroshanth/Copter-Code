@@ -17,7 +17,6 @@ import {
   FolderOpen,
   FileText,
   Users,
-  Crown
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -89,22 +88,6 @@ export default function Sidebar() {
 
       {/* Bottom Promotions & Storage Info */}
       <div className="p-4 space-y-4">
-        {/* Upgrade to Pro Card */}
-        <div className="p-5 rounded-2xl bg-indigo-50 border border-indigo-100/50">
-          <div className="flex items-center gap-2 mb-2">
-            <Crown className="w-5 h-5 text-orange-500 fill-orange-500" />
-            <span className="text-[15px] font-bold text-slate-900 tracking-tight">
-              Upgrade to Pro
-            </span>
-          </div>
-          <p className="text-[13px] text-slate-600 mb-4 leading-relaxed font-medium">
-            Unlock all features and AI tools.
-          </p>
-          <button className="w-full py-2.5 bg-[#6366F1] hover:bg-indigo-600 text-white text-[13px] font-bold rounded-xl shadow-sm transition-colors">
-            Upgrade Now
-          </button>
-        </div>
-
         {/* Storage Progress Widget */}
         <div className="px-1 pb-4">
           <div className="text-[14px] font-bold text-slate-900 mb-1">

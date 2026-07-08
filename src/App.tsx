@@ -152,7 +152,7 @@ export default function App() {
   const isFullScreenApp = ['tools', 'editor'].includes(currentView);
 
   return (
-    <div id="phototoolkit-app" className="font-sans antialiased bg-[#F8FAFC] text-slate-900 select-none min-h-screen">
+    <div id="phototoolkit-app" className="font-sans antialiased bg-[#F8FAFC] text-slate-900 min-h-screen">
       <AnimatePresence mode="wait">
         {isOuterPage || isFullScreenApp ? (
           <FadeInPage viewKey={currentView}>{renderView()}</FadeInPage>

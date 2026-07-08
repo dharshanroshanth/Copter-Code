@@ -1,8 +1,60 @@
 import React, { useState, useRef } from 'react';
 import { useStore, store } from '../store';
-import { Scissors, Upload, Download, Loader2, ArrowLeft, Image as ImageIcon, RefreshCcw } from 'lucide-react';
+import { Scissors, Upload, Download, Loader2, ArrowLeft, Image as ImageIcon, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { removeBackground } from '@imgly/background-removal';
+
+// Helper to convert image sources to Blob or self-contained data to avoid CORS and sandbox iframe restrictions
+const prepareImageSource = async (src: string): Promise<Blob | string> => {
+  if (src.startsWith('blob:')) {
+    try {
+      const response = await fetch(src);
+      return await response.blob();
+    } catch (err) {
+      console.warn('Failed to convert blob URL to Blob:', err);
+    }
+  } else if (src.startsWith('http')) {
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      return await response.blob();
+    } catch (err) {
+      console.warn('CORS fetch of remote image failed, passing URL directly:', err);
+    }
+  }
+  return src;
+};
+
+// Resilient background removal trying multiple CDNs sequentially in case of blocks or outages
+const removeBgWithFallbacks = async (
+  image: Blob | string,
+  onProgress: (progress: number) => void
+): Promise<Blob> => {
+  const cdns = [
+    "https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/",
+    "https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@1.7.0/dist/",
+    "https://unpkg.com/@imgly/background-removal-data@1.7.0/dist/"
+  ];
+
+  let lastError: any = null;
+  for (const cdn of cdns) {
+    try {
+      console.log(`Attempting background removal with CDN: ${cdn}`);
+      const resultBlob = await removeBackground(image, {
+        publicPath: cdn,
+        progress: (key, current, total) => {
+          if (total) {
+            onProgress(Math.round((current / total) * 100));
+          }
+        }
+      });
+      return resultBlob;
+    } catch (err) {
+      console.warn(`Background removal failed using CDN ${cdn}:`, err);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("All CDN paths failed to initialize or download model files.");
+};
 
 export default function BgRemover() {
   const { selectedImage } = useStore();
@@ -10,18 +62,17 @@ export default function BgRemover() {
   const [result, setResult] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setImage(event.target?.result as string);
-        setResult(null);
-        setProgress(0);
-      };
-      reader.readAsDataURL(file);
+      const url = URL.createObjectURL(file);
+      setImage(url);
+      setResult(null);
+      setProgress(0);
+      setError(null);
     }
   };
 
@@ -29,21 +80,23 @@ export default function BgRemover() {
     if (!image) return;
     setIsProcessing(true);
     setProgress(0);
+    setError(null);
 
     try {
-      const blob = await removeBackground(image, {
-        publicPath: "https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/",
-        progress: (key, current, total) => {
-          if (total) {
-            setProgress(Math.round((current / total) * 100));
-          }
-        }
+      // Step 1: Pre-process image source to standard Blob
+      const imageSource = await prepareImageSource(image);
+      
+      // Step 2: Run background remover with CDN resilience
+      const blob = await removeBgWithFallbacks(imageSource, (p) => {
+        setProgress(p);
       });
+      
       const url = URL.createObjectURL(blob);
       setResult(url);
-    } catch (error) {
-      console.error('Error removing background:', error);
-      alert('Failed to remove background. Please try another image.');
+    } catch (err: any) {
+      console.error('Error removing background:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg);
     } finally {
       setIsProcessing(false);
     }
@@ -78,6 +131,21 @@ export default function BgRemover() {
 
       <div className="flex-1 overflow-y-auto p-8 flex justify-center">
         <div className="max-w-4xl w-full space-y-6">
+          {error && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-2xl flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-rose-500 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="font-bold text-sm">Background Removal Failed</h4>
+                <p className="text-xs text-rose-700 leading-relaxed">
+                  {error}
+                </p>
+                <p className="text-[11px] text-rose-600 font-medium leading-relaxed">
+                  Tip: WebAssembly or CDN access might be restricted in your current environment/iframe sandbox. Try using a smaller or different image, or open the app in a new tab if issues persist.
+                </p>
+              </div>
+            </div>
+          )}
+
           {!image ? (
             <div className="border-2 border-dashed border-slate-300 rounded-3xl h-[400px] flex flex-col items-center justify-center bg-white hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => fileInputRef.current?.click()}>
               <div className="w-16 h-16 bg-indigo-50 text-indigo-500 rounded-2xl flex items-center justify-center mb-4">
@@ -169,7 +237,7 @@ export default function BgRemover() {
                 </div>
                 {result && (
                   <div className="flex gap-3">
-                    <button onClick={() => { setResult(null); setProgress(0); }} className="flex-1 py-3 px-4 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[14px] font-bold shadow-sm transition-colors flex items-center justify-center gap-2">
+                    <button onClick={() => { setResult(null); setProgress(0); setError(null); }} className="flex-1 py-3 px-4 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[14px] font-bold shadow-sm transition-colors flex items-center justify-center gap-2">
                       <RefreshCcw className="w-4 h-4" />
                       Reset
                     </button>

@@ -87,6 +87,7 @@ export default function AIStudio() {
   const [enhancePrompt, setEnhancePrompt] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageModel, setImageModel] = useState('flux');
+  const [highQuality, setHighQuality] = useState(true);
 
     
   useEffect(() => {
@@ -129,10 +130,35 @@ export default function AIStudio() {
       // Free AI image generation via pollinations
       let width = 1024;
       let height = 1024;
-      if (aspectRatio === '16:9') { height = 576; }
-      else if (aspectRatio === '9:16') { width = 576; }
-      else if (aspectRatio === '4:3') { height = 768; }
-      else if (aspectRatio === '3:4') { width = 768; }
+      if (highQuality) {
+        if (aspectRatio === '16:9') {
+          width = 1280;
+          height = 720;
+        } else if (aspectRatio === '9:16') {
+          width = 720;
+          height = 1280;
+        } else if (aspectRatio === '4:3') {
+          width = 1152;
+          height = 864;
+        } else if (aspectRatio === '3:4') {
+          width = 864;
+          height = 1152;
+        }
+      } else {
+        if (aspectRatio === '16:9') {
+          width = 1024;
+          height = 576;
+        } else if (aspectRatio === '9:16') {
+          width = 576;
+          height = 1024;
+        } else if (aspectRatio === '4:3') {
+          width = 1024;
+          height = 768;
+        } else if (aspectRatio === '3:4') {
+          width = 768;
+          height = 1024;
+        }
+      }
 
       const promises = Array.from({ length: batchSize }).map(async (_, idx) => {
         let seed = Math.floor(Math.random() * 100000);
@@ -407,6 +433,18 @@ export default function AIStudio() {
                             className={`w-10 h-5 rounded-full transition-colors relative ${enhancePrompt ? 'bg-indigo-500' : 'bg-zinc-700'}`}
                           >
                             <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 transition-all ${enhancePrompt ? 'left-6' : 'left-0.5'}`} />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-zinc-950/50 rounded-md border border-[#27272a]">
+                          <div className="space-y-0.5">
+                            <label className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider">High Resolution (HD)</label>
+                            <p className="text-[9px] text-zinc-500">Render in pristine HD clarity (slower but sharper)</p>
+                          </div>
+                          <button
+                            onClick={() => setHighQuality(!highQuality)}
+                            className={`w-10 h-5 rounded-full transition-colors relative ${highQuality ? 'bg-indigo-500' : 'bg-zinc-700'}`}
+                          >
+                            <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 transition-all ${highQuality ? 'left-6' : 'left-0.5'}`} />
                           </button>
                         </div>
                         <div className="space-y-1.5">

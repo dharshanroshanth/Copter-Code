@@ -1,8 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore, store } from '../store';
-import { Image as ImageIcon, Upload, Download, Loader2, ArrowLeft, Crop } from 'lucide-react';
+import { Image as ImageIcon, Upload, Download, Loader2, ArrowLeft, Crop, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { removeBackground } from '@imgly/background-removal';
+
+// Helper to convert image sources (including client-side blob URLs) to Base64 so they can be processed on the server
+const prepareImageForServer = async (src: string): Promise<string> => {
+  if (src.startsWith('data:') || src.startsWith('http')) {
+    return src;
+  }
+  if (src.startsWith('blob:')) {
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error('Failed to convert blob URL to base64:', err);
+    }
+  }
+  return src;
+};
 
 export default function PassportPhoto() {
   const { selectedImage } = useStore();
@@ -12,6 +33,7 @@ export default function PassportPhoto() {
   const [progress, setProgress] = useState(0);
   const [bgColor, setBgColor] = useState('#FFFFFF');
   const [format, setFormat] = useState('2x2'); // '2x2' or '35x45'
+  const [error, setError] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -24,6 +46,7 @@ export default function PassportPhoto() {
       reader.onload = (event) => {
         setImage(event.target?.result as string);
         setResult(null);
+        setError(null);
         bgRemovedImageRef.current = null;
       };
       reader.readAsDataURL(file);
@@ -34,19 +57,31 @@ export default function PassportPhoto() {
     if (!image) return;
     setIsProcessing(true);
     setProgress(0);
+    setError(null);
     
     try {
       let maskUrl = result;
       if (!bgRemovedImageRef.current) {
-        const blob = await removeBackground(image, {
-          publicPath: "https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/",
-          progress: (key, current, total) => {
-            if (total) {
-              setProgress(Math.round((current / total) * 100));
-            }
-          }
+        setProgress(30);
+        const preparedImage = await prepareImageForServer(image);
+        setProgress(65);
+        
+        const response = await fetch('/api/ai/remove-bg', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: preparedImage }),
         });
-        maskUrl = URL.createObjectURL(blob);
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Server responded with status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        
+        maskUrl = data.imageUrl;
+        setProgress(100);
       }
       
       const img = new Image();
@@ -55,9 +90,10 @@ export default function PassportPhoto() {
         renderCanvas(img);
       };
       img.src = maskUrl!;
-    } catch (error) {
-      console.error('Error processing photo:', error);
-      alert('Failed to process. Please try another image.');
+    } catch (err: any) {
+      console.error('Error processing photo:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg);
       setIsProcessing(false);
     }
   };
@@ -126,6 +162,21 @@ export default function PassportPhoto() {
 
       <div className="flex-1 overflow-y-auto p-8 flex justify-center">
         <div className="max-w-4xl w-full space-y-6">
+          {error && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-2xl flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-rose-500 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="font-bold text-sm">Background Removal Failed</h4>
+                <p className="text-xs text-rose-700 leading-relaxed">
+                  {error}
+                </p>
+                <p className="text-[11px] text-rose-600 font-medium leading-relaxed">
+                  Tip: WebAssembly or CDN access might be restricted in your current environment/iframe sandbox. Try using a smaller or different image, or open the app in a new tab if issues persist.
+                </p>
+              </div>
+            </div>
+          )}
+
           {!image ? (
             <div className="border-2 border-dashed border-slate-300 rounded-3xl h-[400px] flex flex-col items-center justify-center bg-white hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => fileInputRef.current?.click()}>
               <div className="w-16 h-16 bg-sky-50 text-sky-500 rounded-2xl flex items-center justify-center mb-4">
