@@ -1,0 +1,767 @@
+import * as React from 'react';
+import { useStore, store } from '../store';
+import {
+  Crop, Sliders, Sparkles, Type, Layers, Wand2, Image as ImageIcon,
+  SquareStack, Frame, MoreHorizontal, ChevronLeft, Undo, Redo, Cloud,
+  Crown, Download, ChevronDown, RotateCw, FlipHorizontal, Link,
+  ZoomIn, ZoomOut, Maximize, Play, LayoutGrid, Settings2, Diamond,
+  Triangle, CloudRain, Circle, Plus, Hash, Trash2, X
+} from 'lucide-react';
+
+export default function Editor() {
+  const { selectedImage, activeQuickTool } = useStore();
+  const [isProcessing, setIsProcessing] = React.useState(false);
+  const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  const defaultImage = 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=80';
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const overlayInputRef = React.useRef<HTMLInputElement>(null);
+  const imageRef = React.useRef<HTMLImageElement>(null);
+
+  const [activeImage, setActiveImage] = React.useState(selectedImage || defaultImage);
+  React.useEffect(() => { if (selectedImage) setActiveImage(selectedImage); }, [selectedImage]);
+  const [activeNav, setActiveNav] = React.useState('crop');
+  const [activeRatio, setActiveRatio] = React.useState('custom');
+
+  // Functional State
+  const defaultAdjustments = {
+    brightness: 0, contrast: 0, highlights: 0, shadows: 0,
+    whites: 0, blacks: 0, vibrance: 0, saturation: 0,
+    temperature: 0, tint: 0,
+    clarity: 0, sharpen: 0, dehaze: 0, vignette: 0
+  };
+  
+  const defaultTransform = { rotate: 0, flipX: false, flipY: false };
+  React.useEffect(() => {
+    if (activeQuickTool) {
+      setIsProcessing(true);
+      const timer = setTimeout(() => {
+        setIsProcessing(false);
+        let toolName = activeQuickTool;
+        switch (activeQuickTool) {
+          case "bg-remover": toolName = "Background removed"; break;
+          case "enhancer": toolName = "Image enhanced"; break;
+          case "obj-remover": toolName = "Objects removed"; break;
+          case "passport": toolName = "Passport photo generated"; break;
+          case "ocr": toolName = "Text extracted"; break;
+          case "compress": toolName = "Image compressed"; break;
+        }
+        setToastMessage(`${toolName} successfully!`);
+        store.setActiveQuickTool(null);
+        setTimeout(() => setToastMessage(null), 3000);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeQuickTool]);
+
+  const [adjustments, setAdjustments] = React.useState({ ...defaultAdjustments });
+  const [transform, setTransform] = React.useState({ ...defaultTransform });
+  const [zoom, setZoom] = React.useState(100);
+  const [dimensions, setDimensions] = React.useState({ w: 1920, h: 1080 });
+  const [isLinked, setIsLinked] = React.useState(true);
+  const linkedAspectRef = React.useRef(1920/1080);
+  React.useEffect(() => {
+    if (isLinked && dimensions.w > 0 && dimensions.h > 0 && activeRatio !== "custom") {
+      linkedAspectRef.current = dimensions.w / dimensions.h;
+    }
+  }, [isLinked, dimensions.w, dimensions.h, activeRatio]);
+  // Layers State
+  const [texts, setTexts] = React.useState<{id: string, text: string, x: number, y: number, color: string, size: number}[]>([]);
+  const [overlays, setOverlays] = React.useState<{id: string, src: string, x: number, y: number, width: number}[]>([]);
+
+  // History State
+  const [history, setHistory] = React.useState<any[]>([]);
+  const [historyIndex, setHistoryIndex] = React.useState(-1);
+
+  React.useEffect(() => {
+    if (history.length === 0) {
+      saveHistoryState();
+    }
+  }, []);
+
+  const saveHistoryState = () => {
+    const state = { adjustments, transform, zoom, dimensions, texts, overlays };
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(state);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      const prevState = history[historyIndex - 1];
+      setAdjustments(prevState.adjustments);
+      setTransform(prevState.transform);
+      setZoom(prevState.zoom);
+      setDimensions(prevState.dimensions);
+      setTexts(prevState.texts || []);
+      setOverlays(prevState.overlays || []);
+      setHistoryIndex(historyIndex - 1);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < history.length - 1) {
+      const nextState = history[historyIndex + 1];
+      setAdjustments(nextState.adjustments);
+      setTransform(nextState.transform);
+      setZoom(nextState.zoom);
+      setDimensions(nextState.dimensions);
+      setTexts(nextState.texts || []);
+      setOverlays(nextState.overlays || []);
+      setHistoryIndex(historyIndex + 1);
+    }
+  };
+
+  const [filmstrip, setFilmstrip] = React.useState([
+    { id: 1, label: 'Original', src: activeImage },
+    { id: 2, label: 'Mountain View', src: 'https://images.unsplash.com/photo-1464822759023-fea0923eb422?w=400&q=80' },
+    { id: 3, label: 'Boat Closeup', src: 'https://images.unsplash.com/photo-1542382156909-9ae37b3f56fd?w=400&q=80' },
+    { id: 4, label: 'Forest', src: 'https://images.unsplash.com/photo-1448375240586-882707db888b?w=400&q=80' },
+  ]);
+
+  const handleReset = () => {
+    setAdjustments({ ...defaultAdjustments });
+    setTransform({ ...defaultTransform });
+    setZoom(100);
+    setTexts([]);
+    setOverlays([]);
+    saveHistoryState();
+  };
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    if (history.length <= 1) {
+      setDimensions({
+        w: e.currentTarget.naturalWidth,
+        h: e.currentTarget.naturalHeight
+      });
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const url = URL.createObjectURL(e.target.files[0]);
+      setActiveImage(url);
+      setFilmstrip(prev => [
+        { id: Date.now(), label: e.target.files![0].name, src: url },
+        ...prev
+      ]);
+      handleReset();
+    }
+  };
+
+  const selectFilmstripImage = (src: string) => {
+    setActiveImage(src);
+    handleReset();
+  };
+
+  const handleRatioClick = (ratioId: string) => {
+    setActiveRatio(ratioId);
+    if (!imageRef.current) return;
+    
+    const imgW = imageRef.current.naturalWidth;
+    const imgH = imageRef.current.naturalHeight;
+    let newW = dimensions.w;
+    let newH = dimensions.h;
+    
+    const area = newW * newH || (imgW * imgH);
+
+    switch (ratioId) {
+      case '1:1': newW = Math.sqrt(area); newH = newW; break;
+      case '16:9': newW = Math.sqrt(area * 16 / 9); newH = newW * 9 / 16; break;
+      case '4:5': newW = Math.sqrt(area * 4 / 5); newH = newW * 5 / 4; break;
+      case '9:16': newW = Math.sqrt(area * 9 / 16); newH = newW * 16 / 9; break;
+      case '3:2': newW = Math.sqrt(area * 3 / 2); newH = newW * 2 / 3; break;
+      case '2:3': newW = Math.sqrt(area * 2 / 3); newH = newW * 3 / 2; break;
+      case 'original': newW = imgW; newH = imgH; break;
+    }
+    
+    if (ratioId !== 'custom' && ratioId !== 'free') {
+      setDimensions({ w: Math.round(newW), h: Math.round(newH) });
+      saveHistoryState();
+    }
+  };
+
+  const getFilterStyle = () => {
+    let b = 100 + adjustments.brightness + (adjustments.shadows * 0.2) + (adjustments.whites * 0.2) - (adjustments.blacks * 0.2); 
+    let c = 100 + adjustments.contrast + (adjustments.highlights * 0.2) + (adjustments.clarity * 0.3) + (adjustments.dehaze * 0.2);
+    let s = 100 + adjustments.saturation + (adjustments.vibrance * 0.5) + (adjustments.dehaze * 0.1);
+    
+    let filter = `brightness(${b}%) contrast(${c}%) saturate(${s}%) hue-rotate(${adjustments.tint}deg)`;
+    
+    if (adjustments.temperature > 0) {
+      filter += ` sepia(${adjustments.temperature}%) hue-rotate(-30deg) saturate(120%)`;
+    } else if (adjustments.temperature < 0) {
+      filter += ` sepia(${Math.abs(adjustments.temperature)}%) hue-rotate(180deg) saturate(120%)`;
+    }
+
+    if (adjustments.sharpen > 0) {
+      filter += ` contrast(${100 + (adjustments.sharpen * 0.4)}%)`;
+    }
+    return filter;
+  };
+
+  const handleDownload = () => {
+    if (!imageRef.current) return;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = dimensions.w;
+    canvas.height = dimensions.h;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.filter = getFilterStyle();
+
+    const imgW = imageRef.current.naturalWidth;
+    const imgH = imageRef.current.naturalHeight;
+
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((transform.rotate * Math.PI) / 180);
+    ctx.scale(transform.flipX ? -1 : 1, transform.flipY ? -1 : 1);
+    
+    // Fit image to cover dimensions
+    const isRotated = transform.rotate % 180 !== 0;
+    const effImgW = isRotated ? imgH : imgW;
+    const effImgH = isRotated ? imgW : imgH;
+    const coverScale = Math.max(canvas.width / effImgW, canvas.height / effImgH);
+    const scaledW = imgW * coverScale;
+    const scaledH = imgH * coverScale;
+
+    ctx.drawImage(
+      imageRef.current,
+      -scaledW / 2,
+      -scaledH / 2,
+      scaledW,
+      scaledH
+    );
+
+    const link = document.createElement('a');
+    link.download = `phototoolkit-export-${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png', 1.0);
+    link.click();
+  };
+
+  const renderSlider = (label: string, key: keyof typeof adjustments, min: number, max: number) => {
+    const val = adjustments[key];
+    return (
+      <div className="mb-5">
+        <div className="flex justify-between items-center mb-2.5">
+          <span className="text-[14px] text-slate-700 font-medium">{label}</span>
+          <div className="min-w-[40px] h-7 bg-slate-50 border border-slate-100 rounded-md flex items-center justify-center px-2">
+            <span className="text-[13px] text-slate-700 font-medium">{val}</span>
+          </div>
+        </div>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          value={val}
+          onChange={(e) => setAdjustments({ ...adjustments, [key]: parseInt(e.target.value) })}
+          onMouseUp={saveHistoryState}
+          onTouchEnd={saveHistoryState}
+          className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-0 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#6366F1] [&::-webkit-slider-thumb]:rounded-full shadow-sm"
+        />
+      </div>
+    );
+  };
+
+  const navItems = [
+    { id: 'crop', label: 'Crop', icon: Crop },
+    { id: 'adjust', label: 'Adjust', icon: Sliders },
+    { id: 'filters', label: 'Filters', icon: Sparkles },
+    { id: 'text', label: 'Text', icon: Type },
+    { id: 'overlay', label: 'Overlay', icon: ImageIcon },
+  ];
+
+  const cropRatios = [
+    { id: 'custom', icon: LayoutGrid, label: 'Custom' },
+    { id: 'original', icon: ImageIcon, label: 'Original' },
+    { id: '1:1', icon: Hash, label: '1:1\nSquare' },
+    { id: '16:9', icon: Hash, label: '16:9\nWidescreen' },
+    { id: '4:5', icon: Hash, label: '4:5\nPortrait' },
+    { id: '9:16', icon: Hash, label: '9:16\nStory' },
+    { id: '3:2', icon: Hash, label: '3:2\nPhoto' },
+    { id: '2:3', icon: Hash, label: '2:3\nPortrait' },
+    { id: 'free', icon: LayoutGrid, label: 'Free\nForm' },
+  ];
+
+  // --- SIDEBAR PANELS ---
+
+  const renderCropPanel = () => (
+    <>
+      <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
+        <h2 className="text-[16px] font-bold text-slate-900">Crop & Resize</h2>
+      </div>
+      <div className="p-5 space-y-8">
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Crop Ratio</h3>
+          <div className="grid grid-cols-3 gap-3">
+            {cropRatios.map((ratio) => (
+              <button
+                key={ratio.id}
+                onClick={() => handleRatioClick(ratio.id)}
+                className={`flex flex-col items-center justify-center gap-2 h-[84px] rounded-2xl border transition-all ${
+                  activeRatio === ratio.id 
+                    ? 'border-[#6366F1] bg-[#F0F0FE] text-[#6366F1]' 
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                <ratio.icon className="w-6 h-6 stroke-[1.5]" />
+                <span className="text-[11px] font-medium text-center leading-tight whitespace-pre-line">{ratio.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Rotate</h3>
+          <div className="flex items-center gap-3">
+            <input 
+              type="range" min="-180" max="180" 
+              value={transform.rotate}
+              onChange={(e) => setTransform({ ...transform, rotate: parseInt(e.target.value) })}
+              onMouseUp={saveHistoryState} onTouchEnd={saveHistoryState}
+              className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-0 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#6366F1] [&::-webkit-slider-thumb]:rounded-full shadow-sm" 
+            />
+            <div className="w-12 h-8 rounded-lg border border-slate-200 flex items-center justify-center text-[12px] font-medium text-slate-700 bg-slate-50">
+              {transform.rotate}°
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setTransform({ ...transform, rotate: transform.rotate - 90 }); saveHistoryState(); }} className="flex-1 h-11 rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors">
+              <RotateCw className="w-4.5 h-4.5 -scale-x-100" />
+            </button>
+            <button onClick={() => { setTransform({ ...transform, rotate: transform.rotate + 90 }); saveHistoryState(); }} className="flex-1 h-11 rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors">
+              <RotateCw className="w-4.5 h-4.5" />
+            </button>
+            <button onClick={() => { setTransform({ ...transform, flipX: !transform.flipX }); saveHistoryState(); }} className="flex-1 h-11 rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 transition-colors">
+              <FlipHorizontal className="w-4.5 h-4.5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Resize</h3>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-11 border border-slate-200 rounded-xl flex items-center px-3 bg-white focus-within:border-[#6366F1] focus-within:ring-1">
+              <span className="text-[14px] text-slate-400 font-medium mr-2">W</span>
+              <input type="number" value={dimensions.w || ""} 
+                onChange={(e) => {
+                  setActiveRatio("custom");
+                  const newW = parseInt(e.target.value) || 0;
+                  if (isLinked) {
+                    setDimensions({ w: newW, h: Math.round(newW / linkedAspectRef.current) });
+                  } else {
+                    setDimensions({ ...dimensions, w: newW });
+                  }
+                }}
+                onBlur={saveHistoryState}
+                className="w-full text-[15px] font-medium text-slate-900 outline-none bg-transparent" />
+            </div>
+            <button onClick={() => setIsLinked(!isLinked)} className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLinked ? 'bg-[#F0F0FE] text-[#6366F1]' : 'bg-slate-50 text-slate-400 border border-slate-200'}`}>
+              <Link className="w-4 h-4" />
+            </button>
+            <div className="flex-1 h-11 border border-slate-200 rounded-xl flex items-center px-3 bg-white focus-within:border-[#6366F1] focus-within:ring-1">
+              <span className="text-[14px] text-slate-400 font-medium mr-2">H</span>
+              <input type="number" value={dimensions.h || ""} 
+                onChange={(e) => {
+                  setActiveRatio("custom");
+                  const newH = parseInt(e.target.value) || 0;
+                  if (isLinked) {
+                    setDimensions({ w: Math.round(newH * linkedAspectRef.current), h: newH });
+                  } else {
+                    setDimensions({ ...dimensions, h: newH });
+                  }
+                }}
+                onBlur={saveHistoryState}
+                className="w-full text-[15px] font-medium text-slate-900 outline-none bg-transparent" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderAdjustPanel = () => (
+    <>
+      <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+        <h2 className="text-[16px] font-bold text-slate-900">Adjustments</h2>
+        <button onClick={handleReset} className="text-[12px] font-bold text-[#6366F1] hover:text-indigo-700">Reset All</button>
+      </div>
+      <div className="p-5 space-y-8">
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Light</h3>
+          <div>
+            {renderSlider('Brightness', 'brightness', -100, 100)}
+            {renderSlider('Contrast', 'contrast', -100, 100)}
+            {renderSlider('Highlights', 'highlights', -100, 100)}
+            {renderSlider('Shadows', 'shadows', -100, 100)}
+            {renderSlider('Whites', 'whites', -100, 100)}
+            {renderSlider('Blacks', 'blacks', -100, 100)}
+          </div>
+        </div>
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Color</h3>
+          <div>
+            {renderSlider('Vibrance', 'vibrance', -100, 100)}
+            {renderSlider('Saturation', 'saturation', -100, 100)}
+            {renderSlider('Temperature', 'temperature', -100, 100)}
+            {renderSlider('Tint', 'tint', -100, 100)}
+          </div>
+        </div>
+        <div className="space-y-4">
+          <h3 className="text-[14px] font-bold text-slate-900">Effects</h3>
+          <div>
+            {renderSlider('Clarity', 'clarity', -100, 100)}
+            {renderSlider('Sharpen', 'sharpen', 0, 100)}
+            {renderSlider('Dehaze', 'dehaze', -100, 100)}
+            {renderSlider('Vignette', 'vignette', 0, 100)}
+          </div>
+        </div>
+        <div className="h-8"></div>
+      </div>
+    </>
+  );
+
+  const renderFiltersPanel = () => {
+    const presets = [
+      { name: 'Normal', values: { ...defaultAdjustments } },
+      { name: 'Warm', values: { ...defaultAdjustments, temperature: 30, saturation: 20 } },
+      { name: 'Cool', values: { ...defaultAdjustments, temperature: -30, contrast: 10 } },
+      { name: 'B&W', values: { ...defaultAdjustments, saturation: -100, contrast: 20 } },
+      { name: 'Vintage', values: { ...defaultAdjustments, temperature: 40, tint: -20, contrast: -10, vignette: 40 } },
+      { name: 'Pop', values: { ...defaultAdjustments, vibrance: 50, contrast: 30, saturation: 20 } },
+    ];
+    return (
+      <>
+        <div className="p-5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <h2 className="text-[16px] font-bold text-slate-900">Filters</h2>
+        </div>
+        <div className="p-5 grid grid-cols-2 gap-3">
+           {presets.map(p => (
+              <button 
+                key={p.name}
+                onClick={() => { setAdjustments(p.values); saveHistoryState(); }}
+                className="flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border border-slate-200 hover:border-[#6366F1] hover:bg-[#F0F0FE] hover:text-[#6366F1] transition-all text-slate-600"
+              >
+                 <Sparkles className="w-7 h-7" />
+                 <span className="text-[13px] font-bold">{p.name}</span>
+              </button>
+           ))}
+        </div>
+      </>
+    );
+  };
+
+  const renderTextPanel = () => (
+    <>
+      <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
+        <h2 className="text-[16px] font-bold text-slate-900">Text</h2>
+      </div>
+      <div className="p-5 space-y-4">
+        <button 
+          onClick={() => { setTexts([...texts, { id: Date.now().toString(), text: 'New Text', x: 50, y: 50, color: '#ffffff', size: 48 }]); saveHistoryState(); }}
+          className="w-full py-3 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-xl text-[14px] font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+        >
+          <Type className="w-4 h-4" /> Add Heading
+        </button>
+        <div className="space-y-3 mt-6">
+           {texts.map(t => (
+             <div key={t.id} className="p-3 border border-slate-200 rounded-xl bg-slate-50 space-y-3 shadow-sm">
+                <input 
+                  type="text" 
+                  value={t.text} 
+                  onChange={(e) => setTexts(texts.map(x => x.id === t.id ? { ...x, text: e.target.value } : x))}
+                  onBlur={saveHistoryState}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-[13px] font-medium outline-none focus:border-[#6366F1]"
+                />
+                <div className="flex items-center gap-3">
+                   <input 
+                     type="color" 
+                     value={t.color} 
+                     onChange={(e) => setTexts(texts.map(x => x.id === t.id ? { ...x, color: e.target.value } : x))}
+                     onBlur={saveHistoryState}
+                     className="w-8 h-8 rounded cursor-pointer border border-slate-200 p-0 shrink-0"
+                   />
+                   <input 
+                     type="range" min="12" max="200" 
+                     value={t.size} 
+                     onChange={(e) => setTexts(texts.map(x => x.id === t.id ? { ...x, size: parseInt(e.target.value) } : x))}
+                     onMouseUp={saveHistoryState} onTouchEnd={saveHistoryState}
+                     className="flex-1 h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-[#6366F1] [&::-webkit-slider-thumb]:rounded-full"
+                   />
+                   <button onClick={() => { setTexts(texts.filter(x => x.id !== t.id)); saveHistoryState(); }} className="w-8 h-8 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-lg shrink-0">
+                     <Trash2 className="w-4 h-4" />
+                   </button>
+                </div>
+             </div>
+           ))}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderOverlayPanel = () => (
+    <>
+      <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
+        <h2 className="text-[16px] font-bold text-slate-900">Overlays</h2>
+      </div>
+      <div className="p-5 space-y-4">
+        <input type="file" ref={overlayInputRef} onChange={(e) => {
+          if (e.target.files && e.target.files[0]) {
+            const url = URL.createObjectURL(e.target.files[0]);
+            setOverlays([...overlays, { id: Date.now().toString(), src: url, x: 50, y: 50, width: 30 }]);
+            saveHistoryState();
+          }
+        }} accept="image/*" className="hidden" />
+        <button 
+          onClick={() => overlayInputRef.current?.click()}
+          className="w-full py-3 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-xl text-[14px] font-bold transition-colors shadow-sm flex items-center justify-center gap-2"
+        >
+          <Plus className="w-4 h-4" /> Upload Overlay
+        </button>
+        <div className="grid grid-cols-2 gap-3 mt-6">
+           {overlays.map(o => (
+             <div key={o.id} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-square bg-slate-50 shadow-sm">
+               <img src={o.src} className="w-full h-full object-contain p-2" />
+               <button onClick={() => { setOverlays(overlays.filter(x => x.id !== o.id)); saveHistoryState(); }} className="absolute top-2 right-2 w-7 h-7 bg-white/90 rounded-full flex items-center justify-center text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white hover:scale-105">
+                 <X className="w-4 h-4" />
+               </button>
+             </div>
+           ))}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderSidebarContent = () => {
+    switch (activeNav) {
+      case 'crop': return renderCropPanel();
+      case 'adjust': return renderAdjustPanel();
+      case 'filters': return renderFiltersPanel();
+      case 'text': return renderTextPanel();
+      case 'overlay': return renderOverlayPanel();
+      default: return (
+        <div className="p-6 flex flex-col items-center justify-center h-full text-slate-400">
+          <Wand2 className="w-12 h-12 mb-4 opacity-50" />
+          <p className="text-[14px] font-medium text-center">Select a tool from the menu to see options</p>
+        </div>
+      );
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen w-full bg-[#F8FAFC] overflow-hidden text-slate-900 font-sans">
+      
+      {/* HEADER */}
+      <header className="h-[64px] bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-30">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => store.setView('dashboard')}>
+            <div className="w-8 h-8 rounded-lg bg-[#6366F1] flex items-center justify-center text-white">
+              <Layers className="w-5 h-5" />
+            </div>
+            <span className="font-bold text-lg tracking-tight">PhotoToolkit</span>
+          </div>
+          <div className="h-8 w-px bg-slate-200"></div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => store.setView('dashboard')} className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center transition-colors">
+              <ChevronLeft className="w-5 h-5 text-slate-600" />
+            </button>
+            <div>
+              <h1 className="text-[15px] font-bold leading-tight">Editor</h1>
+              <p className="text-[12px] text-slate-500 font-medium">Professional editing made simple</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg p-1">
+            <button onClick={handleUndo} disabled={historyIndex <= 0} className="w-8 h-8 rounded hover:bg-white hover:shadow-sm flex items-center justify-center text-slate-600 transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-none">
+              <Undo className="w-4 h-4" />
+            </button>
+            <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="w-8 h-8 rounded hover:bg-white hover:shadow-sm flex items-center justify-center text-slate-600 transition-all disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:shadow-none">
+              <Redo className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[13px] font-medium text-slate-500">
+            <Cloud className="w-4 h-4" />
+            <span>Saved</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button className="px-4 h-9 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[13px] font-bold flex items-center gap-2 transition-colors">
+            <Crown className="w-4 h-4 text-amber-500" />
+            Upgrade to Pro
+          </button>
+          <button onClick={handleDownload} className="px-4 h-9 bg-[#6366F1] hover:bg-indigo-600 text-white rounded-lg text-[13px] font-bold flex items-center gap-2 transition-colors shadow-sm">
+            <Download className="w-4 h-4" />
+            Export Image
+          </button>
+        </div>
+      </header>
+
+      {/* MAIN CONTENT AREA */}
+      <div className="flex flex-1 overflow-hidden relative">
+        
+        {/* LEFTMOST SIDEBAR (Nav) */}
+        <div className="w-[96px] bg-white border-r border-slate-200 flex flex-col items-center py-6 shrink-0 overflow-y-auto custom-scrollbar gap-2 z-20 shadow-sm relative">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveNav(item.id)}
+                className={`flex flex-col items-center justify-center w-[76px] h-[76px] rounded-2xl gap-1.5 transition-colors ${
+                  activeNav === item.id 
+                    ? 'bg-[#F0F0FE] text-[#6366F1]' 
+                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                <item.icon className={`w-[22px] h-[22px] ${activeNav === item.id ? 'stroke-[2.5]' : 'stroke-[1.5]'}`} />
+                <span className="text-[11px] font-semibold">{item.label}</span>
+              </button>
+            ))}
+        </div>
+
+        {/* SECOND SIDEBAR (Tool Options) */}
+        <div className="w-[320px] bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto custom-scrollbar z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+           {renderSidebarContent()}
+        </div>
+
+        {/* CENTER WORKSPACE */}
+        <div className="flex-1 flex flex-col min-w-0 bg-[#F4F4F5] relative">
+          
+          {/* FLOATING TOP TOOLBAR */}
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 h-14 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl flex items-center px-2 z-20 gap-1 border border-white/20">
+             <button onClick={() => setActiveNav('crop')} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeNav === 'crop' ? 'bg-[#F0F0FE] text-[#6366F1]' : 'hover:bg-slate-100 text-slate-700'}`}>
+               <Crop className="w-5 h-5" />
+             </button>
+             <div className="w-px h-6 bg-slate-200 mx-2"></div>
+             <button onClick={() => { setTransform({...transform, rotate: transform.rotate + 90}); saveHistoryState(); }} className="px-3 h-10 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-[14px] font-medium text-slate-700 transition-colors">
+               <RotateCw className="w-4.5 h-4.5" /> Rotate
+             </button>
+             <button onClick={() => { setTransform({...transform, flipX: !transform.flipX}); saveHistoryState(); }} className="px-3 h-10 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-[14px] font-medium text-slate-700 transition-colors">
+               <FlipHorizontal className="w-4.5 h-4.5" /> Flip
+             </button>
+             <div className="w-px h-6 bg-slate-200 mx-2"></div>
+             <button onClick={() => setActiveNav('adjust')} className={`px-4 h-10 rounded-xl flex items-center gap-2 text-[14px] font-medium transition-colors ${activeNav === 'adjust' ? 'bg-[#F0F0FE] text-[#6366F1]' : 'hover:bg-slate-100 text-slate-700'}`}>
+               <Sliders className="w-4.5 h-4.5" /> Adjust
+             </button>
+             <button className="px-4 h-10 rounded-xl hover:bg-slate-100 flex items-center gap-2 text-[14px] font-medium text-slate-700 transition-colors">
+               <Play className="w-4.5 h-4.5" /> Animate
+             </button>
+             <div className="w-px h-6 bg-slate-200 mx-2"></div>
+             <button className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors">
+               <LayoutGrid className="w-5 h-5" />
+             </button>
+          </div>
+
+          {/* CANVAS CONTENT */}
+          <div className="flex-1 relative flex items-center justify-center p-8 mt-16 mb-24 overflow-hidden">
+             <div 
+               style={{
+                 transform: `scale(${zoom / 100})`,
+                 transition: 'transform 0.2s ease',
+                 transformOrigin: 'center center'
+               }}
+               className="relative flex items-center justify-center max-w-full max-h-full"
+             >
+                <div 
+                  className="relative shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/5 rounded-sm overflow-hidden"
+                  style={{
+                    aspectRatio: dimensions.w > 0 && dimensions.h > 0 ? `${dimensions.w}/${dimensions.h}` : 'auto',
+                    maxHeight: '65vh',
+                    maxWidth: '100%',
+                    height: '65vh'
+                  }}
+                >
+                   <img 
+                     ref={imageRef}
+                     src={activeImage} 
+                     alt="Editing Canvas" 
+                     onLoad={handleImageLoad}
+                     crossOrigin="anonymous"
+                     style={{
+                       width: '100%',
+                       height: '100%',
+                       objectFit: 'cover',
+                       filter: getFilterStyle(),
+                       transform: `rotate(${transform.rotate}deg) scaleX(${transform.flipX ? -1 : 1}) scaleY(${transform.flipY ? -1 : 1})`,
+                       transformOrigin: 'center center'
+                     }}
+                   />
+                   
+                   {adjustments.vignette > 0 && (
+                     <div className="absolute inset-0 pointer-events-none mix-blend-multiply" style={{
+                        background: `radial-gradient(circle, transparent ${100 - adjustments.vignette}%, rgba(0,0,0,${adjustments.vignette/100}) 150%)`
+                     }}></div>
+                   )}
+
+                   {texts.map(t => (
+                      <div key={t.id} className="absolute whitespace-nowrap cursor-move font-bold" 
+                           style={{ left: `${t.x}%`, top: `${t.y}%`, color: t.color, fontSize: t.size, transform: 'translate(-50%, -50%)', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
+                        {t.text}
+                      </div>
+                   ))}
+                   
+                   {overlays.map(o => (
+                      <div key={o.id} className="absolute cursor-move" 
+                           style={{ left: `${o.x}%`, top: `${o.y}%`, width: `${o.width}%`, transform: 'translate(-50%, -50%)' }}>
+                        <img src={o.src} className="w-full drop-shadow-xl pointer-events-none" />
+                      </div>
+                   ))}
+                </div>
+             </div>
+          </div>
+
+          {/* BOTTOM ZOOM TOOLBAR */}
+          <div className="absolute bottom-28 left-1/2 -translate-x-1/2 h-10 bg-white/95 backdrop-blur-sm rounded-full shadow-lg border border-slate-200 flex items-center px-1 z-20">
+            <button onClick={() => setZoom(z => Math.max(10, z - 10))} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <span className="text-[12px] font-bold text-slate-700 w-12 text-center">{zoom}%</span>
+            <button onClick={() => setZoom(z => Math.min(300, z + 10))} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <div className="w-px h-4 bg-slate-300 mx-1"></div>
+            <button onClick={() => setZoom(100)} className="w-8 h-8 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+              <Maximize className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* FILMSTRIP (BOTTOM) */}
+          <div className="absolute bottom-0 inset-x-0 h-[100px] bg-white border-t border-slate-200 flex items-center gap-3 overflow-x-auto custom-scrollbar px-4 z-20 shadow-[0_-4px_24px_rgba(0,0,0,0.02)]">
+             <input 
+               type="file" 
+               ref={fileInputRef} 
+               onChange={handleFileUpload} 
+               accept="image/*" 
+               className="hidden" 
+             />
+             <button onClick={() => fileInputRef.current?.click()} className="w-[84px] h-[72px] shrink-0 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center gap-1.5 bg-slate-50 hover:bg-slate-100 hover:border-slate-400 transition-all text-slate-500">
+               <Plus className="w-5 h-5" />
+               <span className="text-[11px] font-bold">Add New</span>
+             </button>
+             
+             {filmstrip.map((img) => (
+               <div key={img.id} onClick={() => selectFilmstripImage(img.src)} className={`w-[110px] h-[72px] shrink-0 rounded-xl overflow-hidden relative cursor-pointer group transition-all ${activeImage === img.src ? 'ring-2 ring-[#6366F1] ring-offset-2' : 'hover:opacity-90'}`}>
+                 <img src={img.src} alt={img.label} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                 <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                   <MoreHorizontal className="w-3.5 h-3.5 text-slate-700" />
+                 </div>
+                 <div className="absolute bottom-0 inset-x-0 h-6 bg-white/90 backdrop-blur-sm flex items-center px-2 border-t border-white/50 text-[9.5px] font-bold text-slate-700 shadow-sm">
+                   <span className="w-4 text-slate-400">{img.id}</span>
+                   <span className="truncate">{img.label}</span>
+                 </div>
+               </div>
+             ))}
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  );
+}

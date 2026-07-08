@@ -1,0 +1,190 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Custom palette matching exact Geometric Balance design */
+  --color-brand: #4f46e5;       /* Premium high-contrast Indigo-600 */
+  --color-brand-hover: #6366f1; /* Indigo-500 */
+  --color-brand-light: rgba(99, 102, 241, 0.1);
+  --color-dark-bg: var(--color-bg-app);
+  --color-dark-panel: var(--color-bg-panel);
+  --color-dark-border: var(--color-border-custom);
+  --color-dark-text-primary: var(--color-text-primary);
+  --color-dark-text-secondary: var(--color-text-secondary);
+}
+
+:root {
+  --color-bg-app: #f4f4f5; /* Light gray page background */
+  --color-bg-panel: #ffffff; /* White card background */
+  --color-border-custom: #e4e4e7; /* Light border */
+  --color-text-primary: #09090b; /* Dark text */
+  --color-text-secondary: #52525b; /* Medium gray text */
+  --color-bg-input: #ffffff; /* Light input background */
+  --color-bg-deep: #e4e4e7; /* Light deep gray background */
+}
+
+.dark {
+  --color-bg-app: #09090b;
+  --color-bg-panel: #121214;
+  --color-border-custom: #27272a;
+  --color-text-primary: #ecedee;
+  --color-text-secondary: #a1a1aa;
+  --color-bg-input: #18181b;
+  --color-bg-deep: #09090b;
+}
+
+/* Base custom classes for high-fidelity dark-themed layouts */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  overflow-x: hidden;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Smooth transitions for theme toggle */
+.bg-\[\#09090b\], .bg-\[\#121214\], .border-\[\#27272a\], .text-\[\#ecedee\], .text-white, .text-zinc-400, .bg-zinc-900, .bg-zinc-950 {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
+
+/* LIGHT MODE UTILITY OVERRIDES (when document does NOT have class "dark") */
+html:not(.dark) {
+  /* Toggles default background for the outer wrapper */
+  .bg-\[\#09090b\] {
+    background-color: var(--color-bg-app) !important;
+  }
+  
+  /* Toggles panel container backgrounds */
+  .bg-\[\#121214\] {
+    background-color: var(--color-bg-panel) !important;
+  }
+  
+  /* Toggles secondary card panels and inputs */
+  .bg-zinc-900 {
+    background-color: var(--color-bg-input) !important;
+    border-color: var(--color-border-custom) !important;
+  }
+  .bg-zinc-950 {
+    background-color: var(--color-bg-deep) !important;
+  }
+  .bg-zinc-900\/50 {
+    background-color: rgba(244, 244, 245, 0.5) !important;
+  }
+  .bg-zinc-950\/60 {
+    background-color: rgba(228, 228, 231, 0.6) !important;
+  }
+  
+  /* Borders */
+  .border-\[\#27272a\] {
+    border-color: var(--color-border-custom) !important;
+  }
+  .border-white\/5 {
+    border-color: rgba(9, 9, 11, 0.08) !important;
+  }
+  .border-white\/10 {
+    border-color: rgba(9, 9, 11, 0.12) !important;
+  }
+  
+  /* Texts */
+  .text-\[\#ecedee\], .text-white {
+    color: var(--color-text-primary) !important;
+  }
+  .text-zinc-400 {
+    color: var(--color-text-secondary) !important;
+  }
+  .text-zinc-500 {
+    color: #71717a !important;
+  }
+  .text-zinc-300 {
+    color: #27272a !important;
+  }
+  .text-zinc-200 {
+    color: #18181b !important;
+  }
+  .text-zinc-100 {
+    color: #09090b !important;
+  }
+  
+  /* Interactive blocks */
+  .bg-white\/10 {
+    background-color: rgba(0, 0, 0, 0.06) !important;
+  }
+  .hover\:bg-white\/5:hover {
+    background-color: rgba(0, 0, 0, 0.03) !important;
+  }
+  
+  /* Sidebar and other elements navigation hover overrides */
+  .hover\:bg-zinc-800:hover, .hover\:bg-zinc-900:hover {
+    background-color: #e4e4e7 !important;
+  }
+  
+  /* Grid patterns */
+  .editor-grid-pattern {
+    background-image: linear-gradient(to right, #e4e4e7 1px, transparent 1px),
+                      linear-gradient(to bottom, #e4e4e7 1px, transparent 1px) !important;
+  }
+  .editor-grid-dark {
+    background-image: linear-gradient(to right, #e4e4e7 1px, transparent 1px),
+                      linear-gradient(to bottom, #e4e4e7 1px, transparent 1px) !important;
+  }
+
+  /* Specific canvas/stage editor adjustments */
+  .bg-zinc-950.border-\[\#27272a\].aspect-\[4\/3\],
+  .bg-zinc-950.border-\[\#27272a\].rounded-2xl {
+    background-color: #e4e4e7 !important;
+  }
+
+  /* Webkit Scrollbars for Light theme */
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d8 !important;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa !important;
+  }
+}
+
+/* Soft high-tech grid pattern for dark editing canvases */
+.editor-grid-pattern {
+  background-size: 20px 20px;
+  background-image: linear-gradient(to right, #27272a 1px, transparent 1px),
+                    linear-gradient(to bottom, #27272a 1px, transparent 1px);
+}
+
+.editor-grid-dark {
+  background-size: 20px 20px;
+  background-image: linear-gradient(to right, #27272a 1px, transparent 1px),
+                    linear-gradient(to bottom, #27272a 1px, transparent 1px);
+}
+
+/* Custom scollbars for SaaS dark interface */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Checkered background for image transparency representation */
+.bg-checkered {
+  background-color: #f0f0f0;
+  background-image: 
+    linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
+    linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
