@@ -64,24 +64,29 @@ const enhanceAndSharpenImage = (ctx: CanvasRenderingContext2D, width: number, he
   for (let i = 0; i < w * h; i++) {
     const yNorm = Y[i] / 255;
 
-    // Beautifully balanced tone reproduction curve
-    const blendedY = yNorm * 0.45 + (yNorm * yNorm * (3.0 - 2.0 * yNorm)) * 0.35 + Math.sqrt(yNorm) * 0.20;
+    // Apply a clean photographic S-curve for a modern contrast pop
+    const sCurve = yNorm * yNorm * (3.0 - 2.0 * yNorm);
+
+    // Beautifully balanced tone reproduction curve: blend original, S-curve (contrast), and a gamma curve (shadow lift)
+    let blendedY = yNorm * 0.30 + sCurve * 0.50 + Math.sqrt(yNorm) * 0.20;
+
+    // Apply a subtle global exposure/brightness bump (5% boost to non-white pixels) to make images feel warmer and brighter
+    blendedY = blendedY * 1.05;
 
     Y[i] = Math.max(0.0, Math.min(1.0, blendedY)) * 255;
 
     // 2.1. Professional Vibrance and Skin Protection
-    // Instead of crude global saturation, we boost desaturated colors more than saturated colors,
-    // and gently damp the boost in the warm skin tone region to keep subjects looking completely natural.
+    // Boost vibrance and saturation significantly so colors look rich, deep, and alive
     const uVal = U[i];
     const vVal = V[i];
     const chroma = Math.sqrt(uVal * uVal + vVal * vVal);
     const normalizedChroma = Math.min(1.0, chroma / 100);
 
-    let vibranceFactor = 1.10 - 0.15 * normalizedChroma;
+    let vibranceFactor = 1.35 - 0.20 * normalizedChroma;
 
     // Skin-tone detection: Warm reddish-orange region in YUV is characterized by V > 0 and U < 0
     if (vVal > 0 && uVal < 0) {
-      vibranceFactor = 1.0 + (vibranceFactor - 1.0) * 0.4; // Soften saturation boost to maintain natural skin tone appearance
+      vibranceFactor = 1.0 + (vibranceFactor - 1.0) * 0.45; // Soften saturation boost to maintain natural skin tone appearance
     }
 
     U[i] *= vibranceFactor;
@@ -125,7 +130,7 @@ const enhanceAndSharpenImage = (ctx: CanvasRenderingContext2D, width: number, he
   // - Flat regions (<1.5): Apply gentle bilateral-like skin smoothing.
   // - Limit maximum sharpening change (halos) to preserve edge fidelity without ringing artifacts.
   const Y_final = new Float32Array(w * h);
-  const maxSharpenFactor = sharpenAmount * 0.22; // Controlled, clean, high-fidelity clarity
+  const maxSharpenFactor = sharpenAmount * 1.60; // Clean, high-impact, professional-grade clarity
 
   for (let i = 0; i < w * h; i++) {
     const yVal = Y[i];
@@ -135,27 +140,27 @@ const enhanceAndSharpenImage = (ctx: CanvasRenderingContext2D, width: number, he
 
     let finalY = yVal;
 
-    if (absEdge < 1.5) {
+    if (absEdge < 1.0) {
       // Denoise flat areas smoothly: blend slightly with blurred Y to hide camera sensor noise on cheeks/background
-      const smoothFactor = 0.15 * (1.0 - absEdge / 1.5);
+      const smoothFactor = 0.15 * (1.0 - absEdge / 1.0);
       finalY = yVal * (1.0 - smoothFactor) + yBlur * smoothFactor;
     } else {
-      // Noise gating transition from 2.0 to 8.0
-      let edgeWeight = 0;
-      if (absEdge > 2.0) {
-        edgeWeight = Math.min(1.0, (absEdge - 2.0) / 6.0);
+      // Smooth noise gating transition for micro-details below 5.0
+      let edgeWeight = 1.0;
+      if (absEdge < 5.0) {
+        edgeWeight = absEdge / 5.0;
       }
 
       // Compute sharpening adjustment
-      const sharpenFactor = maxSharpenFactor * edgeWeight;
-      let sharpenEffect = edge * sharpenFactor;
+      const sharpenEffect = edge * maxSharpenFactor * edgeWeight;
 
       // Halo protection: limit maximum correction to avoid ringing artifacts on sharp high-contrast transitions
-      const maxChange = 18.0;
-      if (sharpenEffect > maxChange) sharpenEffect = maxChange;
-      if (sharpenEffect < -maxChange) sharpenEffect = -maxChange;
+      const maxChange = 28.0;
+      let limitedEffect = sharpenEffect;
+      if (limitedEffect > maxChange) limitedEffect = maxChange;
+      if (limitedEffect < -maxChange) limitedEffect = -maxChange;
 
-      finalY = yVal + sharpenEffect;
+      finalY = yVal + limitedEffect;
     }
 
     Y_final[i] = Math.max(0.0, Math.min(255.0, finalY));

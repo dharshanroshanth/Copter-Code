@@ -259,3 +259,21 @@ export const uploadBase64ImageToDrive = async (
 
   return response.json();
 };
+
+// Fetch real storage quota from Google Drive API
+export interface GoogleDriveStorageQuota {
+  limit: string;
+  usage: string;
+}
+
+export const getDriveStorageQuota = async (accessToken: string): Promise<GoogleDriveStorageQuota> => {
+  const url = 'https://www.googleapis.com/drive/v3/about?fields=storageQuota';
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch storage quota from Google Drive');
+  }
+  const data = await response.json();
+  return data.storageQuota;
+};

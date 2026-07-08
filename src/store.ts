@@ -494,6 +494,35 @@ export const store = {
     }
     notify();
   },
+  async updateGoogleDriveStorage(accessToken: string) {
+    try {
+      const { getDriveStorageQuota } = await import('./lib/googleDrive');
+      const quota = await getDriveStorageQuota(accessToken);
+      if (quota && globalState.user) {
+        // Convert string bytes to GB numbers
+        const limitBytes = parseInt(quota.limit, 10);
+        const usageBytes = parseInt(quota.usage, 10);
+        const limitGB = parseFloat((limitBytes / (1024 * 1024 * 1024)).toFixed(2));
+        const usedGB = parseFloat((usageBytes / (1024 * 1024 * 1024)).toFixed(2));
+        
+        globalState.user = {
+          ...globalState.user,
+          storageUsed: usedGB,
+          storageLimit: limitGB,
+        };
+        
+        // Also update stats for completeness
+        globalState.stats = {
+          ...globalState.stats,
+          storageUsed: `${usedGB} GB`,
+        };
+        
+        notify();
+      }
+    } catch (err) {
+      console.error('Failed to update Google Drive storage in store:', err);
+    }
+  },
   setTheme(theme: 'auto' | 'light' | 'dark') {
     globalState.theme = theme;
     if (typeof window !== 'undefined') {

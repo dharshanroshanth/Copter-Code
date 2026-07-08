@@ -196,8 +196,8 @@ export default function Settings() {
             {activeTab === 'database' && (
               <div className="space-y-6">
                 <div>
-                  <h3 className="font-display font-bold text-xl text-white">Storage & Usage</h3>
-                  <p className="text-xs text-zinc-500 mt-1">Track your sandbox file usage and server quotas.</p>
+                  <h3 className="font-display font-bold text-xl text-white">Google Drive Storage & Usage</h3>
+                  <p className="text-xs text-zinc-500 mt-1">Track your Google Drive file usage and capacity.</p>
                 </div>
 
                 <div className="space-y-5">
@@ -205,7 +205,7 @@ export default function Settings() {
                     <div className="flex justify-between items-center text-xs text-zinc-400">
                       <span className="flex items-center gap-1.5 font-semibold">
                         <Cloud className="w-4 h-4 text-indigo-400" />
-                        Storage Capacity
+                        Google Drive Storage Capacity
                       </span>
                       <span className="font-mono text-zinc-300 font-bold">
                         {user?.storageUsed || '9.4'} GB / {user?.storageLimit || '20'} GB

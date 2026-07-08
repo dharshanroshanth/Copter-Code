@@ -5,10 +5,8 @@
 
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
-import { removeBackground as removeBackgroundNode } from '@imgly/background-removal-node';
 
 dotenv.config();
 
@@ -231,6 +229,7 @@ app.post('/api/ai/remove-bg', async (req, res) => {
       input = new Blob([buffer], { type: mimeType });
     }
 
+    const { removeBackground: removeBackgroundNode } = await import('@imgly/background-removal-node');
     const resultBlob = await removeBackgroundNode(input);
     const resultBuffer = await resultBlob.arrayBuffer();
     const resultBase64 = Buffer.from(resultBuffer).toString('base64');
@@ -249,6 +248,7 @@ app.post('/api/ai/remove-bg', async (req, res) => {
 // Serve frontend assets using Vite middleware or production static folder
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

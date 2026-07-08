@@ -5,6 +5,8 @@
 
 import { useStore, store } from '../store';
 import { ViewType } from '../types';
+import { getAccessToken } from '../lib/firebase';
+import { useEffect } from 'react';
 import {
   LayoutDashboard,
   Settings,
@@ -21,6 +23,13 @@ import {
 
 export default function Sidebar() {
   const { currentView, user } = useStore();
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (token) {
+      store.updateGoogleDriveStorage(token);
+    }
+  }, [currentView]);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -90,8 +99,9 @@ export default function Sidebar() {
       <div className="p-4 space-y-4">
         {/* Storage Progress Widget */}
         <div className="px-1 pb-4">
-          <div className="text-[14px] font-bold text-slate-900 mb-1">
-            Storage
+          <div className="text-[14px] font-bold text-slate-900 mb-1 flex items-center gap-1.5">
+            <Cloud className="w-4.5 h-4.5 text-indigo-500 animate-pulse" />
+            <span>Google Drive Storage</span>
           </div>
           <div className="text-[12px] text-slate-500 font-medium mb-2.5">
             {Math.round(storagePercentage)}% of {storageLimit} GB used
